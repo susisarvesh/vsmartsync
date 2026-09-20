@@ -1,0 +1,61 @@
+//! Tauri commands exposed to the React frontend.
+//!
+//! Keep this surface small. Never return Matrix credentials, database
+//! connection secrets, or other sensitive configuration to the UI.
+
+use crate::common::{app_info, AppInfo};
+
+#[tauri::command]
+pub fn get_app_info() -> AppInfo {
+    tracing::info!(command = "get_app_info", "frontend invoked rust");
+    app_info()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::get_app_info;
+    use crate::common::AppInfo;
+    use tauri::ipc::{CallbackFn, InvokeBody};
+    use tauri::test::{get_ipc_response, mock_builder, mock_context, noop_assets, INVOKE_KEY};
+    use tauri::webview::InvokeRequest;
+    use tauri::WebviewWindowBuilder;
+
+    #[test]
+    fn get_app_info_returns_foundation_metadata() {
+        let info = get_app_info();
+        assert_eq!(info.name, "matrixcosec");
+        assert_eq!(info.version, "0.1.0");
+        assert_eq!(info.stage, "foundation");
+        assert!(!info.description.is_empty());
+    }
+
+    #[test]
+    fn tauri_can_invoke_get_app_info() {
+        let app = mock_builder()
+            .invoke_handler(tauri::generate_handler![get_app_info])
+            .build(mock_context(noop_assets()))
+            .expect("failed to build test app");
+
+        let webview = WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .expect("failed to build test webview");
+
+        let response = get_ipc_response(
+            &webview,
+            InvokeRequest {
+                cmd: "get_app_info".into(),
+                callback: CallbackFn(0),
+                error: CallbackFn(1),
+                url: "tauri://localhost".parse().expect("webview url"),
+                body: InvokeBody::default(),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.to_string(),
+            },
+        )
+        .expect("invoke get_app_info");
+
+        let info: AppInfo = response.deserialize().expect("deserialize app info");
+        assert_eq!(info.name, "matrixcosec");
+        assert_eq!(info.stage, "foundation");
+    }
+}
