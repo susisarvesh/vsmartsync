@@ -9,7 +9,7 @@ pub mod database;
 pub mod domains;
 mod matrix;
 
-pub use common::{DevicePasswordVault, SecretError};
+pub use common::{DevicePasswordVault, SecretError, SecretVault};
 
 use crate::common::load_env_files;
 use tauri::Manager;
@@ -54,7 +54,12 @@ pub fn run() {
             commands::list_devices,
             commands::update_device,
             commands::set_device_password,
-            commands::test_device_connection
+            commands::test_device_connection,
+            commands::create_credential,
+            commands::list_credentials,
+            commands::get_credential,
+            commands::update_credential,
+            commands::set_credential_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

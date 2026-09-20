@@ -4,6 +4,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import { ToasterProvider } from "@/components/ui/toaster";
 import { useDatabaseStatus } from "@/hooks/useDatabaseStatus";
 import type { AppRoute } from "@/navigation";
+import { CredentialsPage } from "@/pages/CredentialsPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { DevicesPage } from "@/pages/DevicesPage";
 import { UsersPage } from "@/pages/UsersPage";
@@ -64,6 +65,9 @@ function AppContent() {
       {route === "users" ? <UsersPage enabled={databaseConnected} /> : null}
       {route === "devices" ? (
         <DevicesPage enabled={databaseConnected} />
+      ) : null}
+      {route === "credentials" ? (
+        <CredentialsPage enabled={databaseConnected} />
       ) : null}
     </AppShell>
   );

@@ -1,10 +1,11 @@
 import { Circle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import type { ConnectionStatus } from "@/types/devices";
-import type { UserStatus } from "@/types/users";
 import { cn } from "@/lib/utils";
 
-export function StatusBadge({ status }: { status: UserStatus }) {
+type ActiveInactive = "active" | "inactive";
+
+export function StatusBadge({ status }: { status: ActiveInactive }) {
   const active = status === "active";
   return (
     <Badge variant={active ? "success" : "default"}>

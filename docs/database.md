@@ -8,7 +8,7 @@
 |---|---|---|
 | Database | PostgreSQL 16+ (local install, not Docker) | **IMPLEMENTED** |
 | Access | SQLx (Rust), runtime Tokio, rustls | **IMPLEMENTED** |
-| Migrations | SQLx files in repository-root `migrations/` | **IMPLEMENTED** (`0001_create_users.sql`, `0002_create_devices.sql`) |
+| Migrations | SQLx files in repository-root `migrations/` | **IMPLEMENTED** (`0001_create_users.sql`, `0002_create_devices.sql`, `0003_create_credentials.sql`) |
 | Dev host port | **5432** | **IMPLEMENTED** |
 
 There is no migrate-only npm script. The app runs `connect_and_migrate` at startup. Live check: `cargo test --manifest-path src-tauri/Cargo.toml -- --ignored`.
@@ -46,6 +46,24 @@ Migration `migrations/0002_create_devices.sql`. Unique on `(host, port)`. Passwo
 
 Do not add enrollment, sync, biometric, Matrix user-id, licensing, or event columns here.
 
+## Credentials table (IMPLEMENTED)
+
+Migration `migrations/0003_create_credentials.sql`. Application system of record only — no Matrix IDs.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | UUID | PRIMARY KEY |
+| `user_id` | UUID | NOT NULL, FK → `users(id)` |
+| `type` | TEXT | NOT NULL, `card` or `pin` only (MVP; biometrics deferred) |
+| `value_ciphertext` | BYTEA | NOT NULL, AES-256-GCM; never returned to React |
+| `value_digest` | BYTEA | NOT NULL, SHA-256 for uniqueness without plaintext |
+| `display_hint` | TEXT | NULL; last-4 mask for cards only; always NULL for PIN |
+| `status` | TEXT | NOT NULL, `active` or `inactive` |
+| `created_at` | TIMESTAMPTZ | NOT NULL |
+| `updated_at` | TIMESTAMPTZ | NOT NULL |
+
+Indexes: `user_id`, `status`, `type` (list filters). Partial unique: one digest per card globally; one PIN per user.
+
 ## Planned entities
 
 These names are **conceptual**. They will become tables (and possibly extra join tables) after a schema design pass.
@@ -54,7 +72,7 @@ These names are **conceptual**. They will become tables (and possibly extra join
 |---|---|---|
 | `users` | People in the application desired state | **IMPLEMENTED** |
 | `devices` | Registered COSEC doors / controllers | **IMPLEMENTED** |
-| `credentials` | Credential records belonging to users | **PLANNED** |
+| `credentials` | Credential records belonging to users | **IMPLEMENTED** |
 | `enrollments` | Enrollment sessions (not the same as a stored credential) | **PLANNED** |
 | `sync_jobs` | Units of work to push/reconcile state to a device | **PLANNED** |
 | `events` | Device-reported history (seq + rollover, payload) | **PLANNED** |

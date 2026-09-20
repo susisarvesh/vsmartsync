@@ -1,8 +1,8 @@
-//! Device password encryption.
+//! Shared secret encryption (AES-256-GCM).
 //!
-//! The AES-256-GCM key is stored in the OS credential store (Keychain /
-//! Credential Manager / Secret Service). Ciphertext lives in PostgreSQL.
-//! Plaintext passwords never go to React or logs.
+//! One OS-keychain master key protects device passwords and user credential
+//! secrets (card numbers, PINs). Ciphertext lives in PostgreSQL. Plaintext
+//! never goes to React or logs.
 
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
@@ -11,23 +11,28 @@ use rand::RngCore;
 use thiserror::Error;
 
 const SERVICE: &str = "com.vsmart.sync";
+/// Single workstation master key for all reversible app secrets at rest.
 const ACCOUNT: &str = "device-password-master-key";
 const NONCE_LEN: usize = 12;
 const KEY_LEN: usize = 32;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum SecretError {
-    #[error("DEVICE_SECRET_UNAVAILABLE")]
+    #[error("SECRET_UNAVAILABLE")]
     Unavailable,
-    #[error("DEVICE_SECRET_CORRUPT")]
+    #[error("SECRET_CORRUPT")]
     Corrupt,
 }
 
-pub struct DevicePasswordVault {
+/// AES-256-GCM vault backed by the OS credential store.
+pub struct SecretVault {
     cipher: Aes256Gcm,
 }
 
-impl DevicePasswordVault {
+/// Backward-compatible name used by the Devices slice.
+pub type DevicePasswordVault = SecretVault;
+
+impl SecretVault {
     pub fn open() -> Result<Self, SecretError> {
         let key = load_or_create_key()?;
         Self::from_key(key)
@@ -101,11 +106,11 @@ fn decode_key(encoded: &str) -> Result<[u8; KEY_LEN], SecretError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_key, encode_key, DevicePasswordVault, KEY_LEN};
+    use super::{decode_key, encode_key, SecretVault, KEY_LEN};
 
     #[test]
     fn round_trips_password_without_logging_plaintext_in_blob() {
-        let vault = DevicePasswordVault::from_key([7u8; KEY_LEN]).expect("vault");
+        let vault = SecretVault::from_key([7u8; KEY_LEN]).expect("vault");
         let blob = vault.encrypt("door-secret").expect("encrypt");
         assert!(!blob.is_empty());
         assert!(!String::from_utf8_lossy(&blob).contains("door-secret"));
@@ -114,7 +119,7 @@ mod tests {
 
     #[test]
     fn rejects_corrupt_ciphertext() {
-        let vault = DevicePasswordVault::from_key([3u8; KEY_LEN]).expect("vault");
+        let vault = SecretVault::from_key([3u8; KEY_LEN]).expect("vault");
         assert!(vault.decrypt(&[1, 2, 3]).is_err());
     }
 

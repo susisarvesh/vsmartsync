@@ -1,6 +1,6 @@
 # Modules
 
-**Status:** Module **folders exist** under `src-tauri/src/`. Domain services live in `src-tauri/src/domains/`. **IMPLEMENTED:** `common` (app info, device password vault), `database` (config/pool/migrate/users+devices repositories), `commands` (`get_app_info`, database status, users, devices), `domains/users`, `domains/devices`, thin `matrix` connectivity probe. Other domains are **PLANNED**.
+**Status:** Module **folders exist** under `src-tauri/src/`. Domain services live in `src-tauri/src/domains/`. **IMPLEMENTED:** `common` (app info, secret vault), `database` (config/pool/migrate/users+devices+credentials repositories), `commands` (foundation, users, devices, credentials), `domains/users`, `domains/devices`, `domains/credentials`, thin `matrix` connectivity probe. Other domains are **PLANNED**.
 
 Each domain is a module in **one** Rust crate. That is a modular monolith, not microservices.
 
@@ -61,9 +61,13 @@ Never return device passwords or ciphertext to Tauri/React.
 | | |
 |---|---|
 | **Responsibility** | Credential records and provisioning data for users. |
-| **Owns** | Types (card, finger, palm, face — as models allow), set/get/delete orchestration. |
-| **Must not own** | Live “place finger on reader” sessions (`enrollments`); Matrix HTTP. |
-| **Depends on** | `users`, `database`, `matrix` (through interfaces). |
+| **Owns** | Types `card` and `pin` for this slice; encrypt-at-rest; activate/deactivate. |
+| **Must not own** | Live enrollment sessions; Matrix HTTP; biometric templates. |
+| **Depends on** | `users`, `database`, shared `SecretVault` (same keychain master key as device passwords). |
+
+Never return plaintext values, ciphertext, or digests to Tauri/React. PIN responses expose no value (UI: Configured). Cards may expose a last-4 mask only.
+
+**IMPLEMENTED** for this slice: create, list (filter user/type/status), get, replace value, set status. No Matrix calls.
 
 ---
 

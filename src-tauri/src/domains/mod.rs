@@ -5,7 +5,7 @@
 
 mod audit;
 mod auth;
-mod credentials;
+pub mod credentials;
 pub mod devices;
 mod enrollments;
 mod events;

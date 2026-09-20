@@ -46,12 +46,12 @@ Device-side users use alphanumeric `user-id` and numeric `ref-user-id` (COSEC De
 
 | | |
 |---|---|
-| **What** | Associate credential *records* with a user (card identifiers, presence of biometric/face templates). Store or reference template data only as the security design allows. |
-| **Why** | Enrollment produces credentials; sync must be able to provision them onto doors. |
-| **UI** | View which credential types a user has; trigger enroll or delete — not raw template editing in the browser. |
-| **Backend** | Credential service; template bytes stay in Rust/PostgreSQL (or on-device only if that is the chosen design). |
-| **Database** | Planned `credentials` entity. |
-| **Matrix** | `/device.cgi/credential` get/set/delete; command `getcount` for enrolled counts. |
+| **What** | Associate credential *records* with a user (card identifiers, PINs). Store values encrypted at rest. Biometric/face templates are **out of scope** for this slice. |
+| **Why** | Enrollment/sync later provision credentials onto doors from this system of record. |
+| **UI** | Credentials page: list/filter, create Card/PIN, replace value, activate/deactivate. Write-only secrets. |
+| **Backend** | Credential service; AES-256-GCM via shared OS-keychain vault. |
+| **Database** | `credentials` table (**IMPLEMENTED**). |
+| **Matrix** | Not called from this slice. Future: `/device.cgi/credential` via Enrollment/Sync. |
 
 Distinguish **credential provisioning** (HTTP set/get of templates or card numbers) from an **enrollment session** (device prompts for a live finger/card/face). See [system-flow.md](system-flow.md).
 

@@ -1,4 +1,4 @@
-import { HardDrive, LayoutDashboard, Users } from "lucide-react";
+import { CreditCard, HardDrive, LayoutDashboard, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { NAV_ITEMS, type AppRoute } from "@/navigation";
 
@@ -6,6 +6,7 @@ const ICONS: Record<AppRoute, typeof LayoutDashboard> = {
   dashboard: LayoutDashboard,
   users: Users,
   devices: HardDrive,
+  credentials: CreditCard,
 };
 
 type AppSidebarProps = {

@@ -3,9 +3,10 @@
 //! Keep this surface small. Never return Matrix credentials, database
 //! connection secrets, device passwords, or ciphertext to the UI.
 
-use crate::common::{app_info, AppInfo, DevicePasswordVault};
-use crate::database::repositories::{DeviceRepository, UserRepository};
+use crate::common::{app_info, AppInfo, DevicePasswordVault, SecretVault};
+use crate::database::repositories::{CredentialRepository, DeviceRepository, UserRepository};
 use crate::database::{DatabaseRuntime, DatabaseStatus};
+use crate::domains::credentials::{self, Credential, CredentialError, CredentialListFilter};
 use crate::domains::devices::{self, Device, DeviceError};
 use crate::domains::users::{self, User, UserError};
 use crate::matrix::MatrixAdapter;
@@ -157,6 +158,112 @@ pub async fn test_device_connection(
         .map_err(device_error_to_command)
 }
 
+#[tauri::command]
+pub async fn create_credential(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    user_id: Uuid,
+    credential_type: String,
+    value: String,
+) -> Result<Credential, String> {
+    tracing::info!(
+        command = "create_credential",
+        user_id = %user_id,
+        credential_type = %credential_type,
+        "frontend invoked rust"
+    );
+    let credentials = credentials_repo(&runtime)?;
+    let users = users_repo(&runtime)?;
+    let vault = SecretVault::open().map_err(credential_secret_error)?;
+    credentials::create_credential(
+        &credentials,
+        &users,
+        &vault,
+        user_id,
+        &credential_type,
+        &value,
+    )
+    .await
+    .map_err(credential_error_to_command)
+}
+
+#[tauri::command]
+pub async fn list_credentials(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    user_id: Option<Uuid>,
+    credential_type: Option<String>,
+    status: Option<String>,
+) -> Result<Vec<Credential>, String> {
+    tracing::info!(command = "list_credentials", "frontend invoked rust");
+    let credentials = credentials_repo(&runtime)?;
+    let filter = CredentialListFilter {
+        user_id,
+        credential_type: credential_type
+            .as_deref()
+            .map(credentials::CredentialType::parse)
+            .transpose()
+            .map_err(credential_error_to_command)?,
+        status: status
+            .as_deref()
+            .map(credentials::CredentialStatus::parse)
+            .transpose()
+            .map_err(credential_error_to_command)?,
+    };
+    credentials::list_credentials(&credentials, filter)
+        .await
+        .map_err(credential_error_to_command)
+}
+
+#[tauri::command]
+pub async fn get_credential(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    id: Uuid,
+) -> Result<Credential, String> {
+    tracing::info!(command = "get_credential", credential_id = %id, "frontend invoked rust");
+    let credentials = credentials_repo(&runtime)?;
+    credentials::get_credential(&credentials, id)
+        .await
+        .map_err(credential_error_to_command)
+}
+
+#[tauri::command]
+pub async fn update_credential(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    id: Uuid,
+    value: Option<String>,
+) -> Result<Credential, String> {
+    tracing::info!(command = "update_credential", credential_id = %id, "frontend invoked rust");
+    let credentials = credentials_repo(&runtime)?;
+    match value {
+        Some(value) if !value.is_empty() => {
+            let vault = SecretVault::open().map_err(credential_secret_error)?;
+            credentials::update_credential_value(&credentials, &vault, id, &value)
+                .await
+                .map_err(credential_error_to_command)
+        }
+        Some(_) => Err(credential_error_to_command(CredentialError::InvalidValue)),
+        None => credentials::get_credential(&credentials, id)
+            .await
+            .map_err(credential_error_to_command),
+    }
+}
+
+#[tauri::command]
+pub async fn set_credential_status(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    id: Uuid,
+    status: String,
+) -> Result<Credential, String> {
+    tracing::info!(
+        command = "set_credential_status",
+        credential_id = %id,
+        "frontend invoked rust"
+    );
+    let credentials = credentials_repo(&runtime)?;
+    credentials::set_credential_status(&credentials, id, &status)
+        .await
+        .map_err(credential_error_to_command)
+}
+
 fn users_repo(runtime: &DatabaseRuntime) -> Result<UserRepository, String> {
     let pool = runtime
         .pool()
@@ -171,6 +278,13 @@ fn devices_repo(runtime: &DatabaseRuntime) -> Result<DeviceRepository, String> {
     Ok(DeviceRepository::new(pool))
 }
 
+fn credentials_repo(runtime: &DatabaseRuntime) -> Result<CredentialRepository, String> {
+    let pool = runtime
+        .pool()
+        .ok_or_else(|| credential_error_to_command(CredentialError::Unavailable))?;
+    Ok(CredentialRepository::new(pool))
+}
+
 fn user_error_to_command(error: UserError) -> String {
     error.to_string()
 }
@@ -179,14 +293,25 @@ fn device_error_to_command(error: DeviceError) -> String {
     error.to_string()
 }
 
+fn credential_error_to_command(error: CredentialError) -> String {
+    error.to_string()
+}
+
 fn secret_error_to_command(_: crate::common::SecretError) -> String {
     DeviceError::SecretUnavailable.to_string()
 }
 
+fn credential_secret_error(_: crate::common::SecretError) -> String {
+    CredentialError::SecretUnavailable.to_string()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{device_error_to_command, get_app_info, user_error_to_command};
+    use super::{
+        credential_error_to_command, device_error_to_command, get_app_info, user_error_to_command,
+    };
     use crate::common::AppInfo;
+    use crate::domains::credentials::{Credential, CredentialError, CredentialStatus, CredentialType};
     use crate::domains::devices::{ConnectionStatus, Device, DeviceError};
     use crate::domains::users::UserError;
     use chrono::Utc;
@@ -228,6 +353,47 @@ mod tests {
         assert_eq!(message, "DEVICE_SECRET_UNAVAILABLE");
         assert!(!message.to_lowercase().contains("password"));
         assert!(!message.contains("ciphertext"));
+    }
+
+    #[test]
+    fn credential_errors_are_stable_and_omit_secrets() {
+        assert_eq!(
+            credential_error_to_command(CredentialError::InvalidType),
+            "CREDENTIAL_INVALID_TYPE"
+        );
+        assert_eq!(
+            credential_error_to_command(CredentialError::UserNotFound),
+            "USER_NOT_FOUND"
+        );
+        assert_eq!(
+            credential_error_to_command(CredentialError::Duplicate),
+            "CREDENTIAL_DUPLICATE"
+        );
+        let message = credential_error_to_command(CredentialError::SecretUnavailable);
+        assert_eq!(message, "CREDENTIAL_SECRET_UNAVAILABLE");
+        assert!(!message.to_lowercase().contains("pin"));
+        assert!(!message.contains("ciphertext"));
+    }
+
+    #[test]
+    fn credential_serde_never_includes_secret_fields() {
+        let credential = Credential {
+            id: Uuid::new_v4(),
+            user_id: Uuid::new_v4(),
+            user_name: "Ada".into(),
+            credential_type: CredentialType::Pin,
+            status: CredentialStatus::Active,
+            masked_value: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let json = serde_json::to_string(&credential).expect("json");
+        assert!(!json.contains("password"));
+        assert!(!json.contains("ciphertext"));
+        assert!(!json.contains("digest"));
+        assert!(!json.contains("\"value\":"));
+        assert!(json.contains("credentialType"));
+        assert!(json.contains("maskedValue") || !json.contains("1234"));
     }
 
     #[test]

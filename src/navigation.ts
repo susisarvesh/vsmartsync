@@ -1,4 +1,4 @@
-export type AppRoute = "dashboard" | "users" | "devices";
+export type AppRoute = "dashboard" | "users" | "devices" | "credentials";
 
 export const NAV_ITEMS: Array<{
   id: AppRoute;
@@ -19,5 +19,10 @@ export const NAV_ITEMS: Array<{
     id: "devices",
     label: "Devices",
     description: "Register and reach Matrix COSEC devices",
+  },
+  {
+    id: "credentials",
+    label: "Credentials",
+    description: "Manage user Card and PIN credentials",
   },
 ];

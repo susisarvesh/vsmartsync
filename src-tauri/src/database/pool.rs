@@ -24,7 +24,16 @@ impl DatabaseError {
             Self::Query(sqlx::Error::Database(db)) => {
                 db.code().as_deref() == Some("23505")
                     || db.constraint() == Some("devices_host_port_unique")
+                    || db.constraint() == Some("credentials_card_value_digest_unique")
+                    || db.constraint() == Some("credentials_one_pin_per_user")
             }
+            _ => false,
+        }
+    }
+
+    pub fn is_foreign_key_violation(&self) -> bool {
+        match self {
+            Self::Query(sqlx::Error::Database(db)) => db.code().as_deref() == Some("23503"),
             _ => false,
         }
     }
