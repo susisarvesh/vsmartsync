@@ -1,4 +1,5 @@
-import type { DatabaseStatus } from "../types/database";
+import { Button } from "@/components/ui/button";
+import type { DatabaseStatus } from "@/types/database";
 
 type PostgresSetupCardProps = {
   status: DatabaseStatus;
@@ -46,10 +47,10 @@ export function PostgresSetupCard({
 
   if (status.connected) {
     return (
-      <section className="setup-card setup-card-ok" aria-live="polite">
-        <h2>PostgreSQL</h2>
-        <p className="setup-ok">{status.message}</p>
-        <p className="setup-meta">
+      <section className="rounded-lg border border-green-200 bg-green-50 p-4">
+        <h3 className="text-sm font-semibold text-success">PostgreSQL</h3>
+        <p className="mt-1 text-sm text-success">{status.message}</p>
+        <p className="mt-1 text-xs text-muted-foreground">
           {status.user}@{status.host}:{status.port}/{status.database}
         </p>
       </section>
@@ -57,46 +58,63 @@ export function PostgresSetupCard({
   }
 
   return (
-    <section className="setup-card" aria-live="polite">
-      <h2>Set up local PostgreSQL</h2>
-      <p className="error" role="alert">
+    <section className="rounded-lg border border-border bg-card p-4">
+      <h3 className="text-sm font-semibold text-foreground">
+        Set up local PostgreSQL
+      </h3>
+      <p className="mt-2 text-sm text-destructive" role="alert">
         {status.message}
       </p>
-      <p className="lede">
+      <p className="mt-2 text-sm text-muted-foreground">
         Vsmart Sync uses PostgreSQL on this computer only. Do not use Docker.
         Target:{" "}
-        <code>
+        <code className="rounded bg-muted px-1 py-0.5 text-xs">
           {status.host}:{status.port}/{status.database}
         </code>{" "}
-        (user <code>{status.user}</code>).
+        (user{" "}
+        <code className="rounded bg-muted px-1 py-0.5 text-xs">
+          {status.user}
+        </code>
+        ).
       </p>
 
-      <h3>{current.title}</h3>
-      <ol className="setup-steps">
+      <h4 className="mt-4 text-sm font-medium">{current.title}</h4>
+      <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-foreground">
         {current.commands.map((command) => (
           <li key={command}>
-            <code>{command}</code>
+            <code className="rounded bg-muted px-1 py-0.5 text-xs">
+              {command}
+            </code>
           </li>
         ))}
       </ol>
-      <p className="lede">
+      <p className="mt-3 text-sm text-muted-foreground">
         After PostgreSQL is running, <code>npm start</code> creates the{" "}
         <code>{status.database}</code> role and database when <code>psql</code>{" "}
         is available. Then click Try again.
       </p>
-      <button type="button" onClick={onRetry} disabled={retrying}>
+      <Button
+        type="button"
+        className="mt-3"
+        onClick={onRetry}
+        disabled={retrying}
+      >
         {retrying ? "Connecting…" : "Try again"}
-      </button>
+      </Button>
 
-      <details className="setup-other">
-        <summary>Other operating systems</summary>
+      <details className="mt-4">
+        <summary className="cursor-pointer text-sm font-medium text-foreground">
+          Other operating systems
+        </summary>
         {otherPlatforms.map(([id, steps]) => (
-          <div key={id}>
-            <h3>{steps.title}</h3>
-            <ol className="setup-steps">
+          <div key={id} className="mt-3">
+            <h4 className="text-sm font-medium">{steps.title}</h4>
+            <ol className="mt-1 list-decimal space-y-1 pl-5 text-sm">
               {steps.commands.map((command) => (
                 <li key={command}>
-                  <code>{command}</code>
+                  <code className="rounded bg-muted px-1 py-0.5 text-xs">
+                    {command}
+                  </code>
                 </li>
               ))}
             </ol>

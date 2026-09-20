@@ -105,6 +105,10 @@ impl DatabaseRuntime {
         }
     }
 
+    pub fn pool(&self) -> Option<DbPool> {
+        self.inner.pool.lock().ok().and_then(|guard| guard.clone())
+    }
+
     fn connected_status(&self) -> DatabaseStatus {
         let mut status = self.base_status();
         status.connected = true;

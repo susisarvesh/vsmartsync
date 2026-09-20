@@ -1,16 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { connectDatabase, getDatabaseStatus } from "../services/database";
-import type { DatabaseStatus } from "../types/database";
+import { connectDatabase, getDatabaseStatus } from "@/services/database";
+import type { DatabaseStatus } from "@/types/database";
 
-type DatabaseStatusState = {
-  status: DatabaseStatus | null;
-  error: string | null;
-  loading: boolean;
-  retrying: boolean;
-  retry: () => void;
-};
-
-export function useDatabaseStatus(): DatabaseStatusState {
+export function useDatabaseStatus() {
   const [status, setStatus] = useState<DatabaseStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -61,7 +53,7 @@ export function useDatabaseStatus(): DatabaseStatusState {
           }
         })
         .catch(() => {
-          /* keep the last status while polling */
+          /* keep last known status while polling */
         });
     }, 5000);
 

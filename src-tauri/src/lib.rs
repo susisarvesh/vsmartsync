@@ -1,14 +1,15 @@
 //! Vsmart Sync application library.
 //!
-//! This crate is a modular monolith. Domain modules are placeholders until
-//! their services are implemented. React talks to this crate only through
+//! This crate is a modular monolith. React talks to this crate only through
 //! Tauri commands — never to PostgreSQL or Matrix devices.
 
 mod commands;
 mod common;
 pub mod database;
-mod domains;
+pub mod domains;
 mod matrix;
+
+pub use common::{DevicePasswordVault, SecretError};
 
 use crate::common::load_env_files;
 use tauri::Manager;
@@ -44,7 +45,16 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_app_info,
             commands::get_database_status,
-            commands::connect_database
+            commands::connect_database,
+            commands::create_user,
+            commands::list_users,
+            commands::update_user,
+            commands::deactivate_user,
+            commands::create_device,
+            commands::list_devices,
+            commands::update_device,
+            commands::set_device_password,
+            commands::test_device_connection
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

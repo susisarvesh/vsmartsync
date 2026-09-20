@@ -14,6 +14,20 @@ pub enum DatabaseError {
     Connect(#[source] sqlx::Error),
     #[error("failed to run postgresql migrations")]
     Migrate(#[source] sqlx::migrate::MigrateError),
+    #[error("failed to query postgresql")]
+    Query(#[source] sqlx::Error),
+}
+
+impl DatabaseError {
+    pub fn is_unique_violation(&self) -> bool {
+        match self {
+            Self::Query(sqlx::Error::Database(db)) => {
+                db.code().as_deref() == Some("23505")
+                    || db.constraint() == Some("devices_host_port_unique")
+            }
+            _ => false,
+        }
+    }
 }
 
 pub async fn connect(config: &DatabaseConfig) -> Result<DbPool, DatabaseError> {

@@ -147,7 +147,7 @@ The desktop application does **not** necessarily perform every real-time biometr
 ## Repository layout (foundation)
 
 ```text
-src/                         React UI (pages, components, hooks, services, types)
+src/                         React UI (pages, components/ui, layout, hooks, services, types)
 src-tauri/src/
   commands.rs                Tauri IPC — the only path from React to Rust
   common/                    Shared helpers

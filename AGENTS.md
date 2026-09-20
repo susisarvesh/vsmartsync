@@ -58,6 +58,7 @@ Authoritative engineering files:
 - `docs/engineering/testing.md`
 - `docs/engineering/observability.md`
 - `docs/engineering/performance.md`
+- `docs/engineering/ui-design.md`
 - `docs/engineering/code-review-checklist.md`
 
 Product and integration docs stay under `docs/` (`getting-started.md`, `matrix-integration.md`, `synchronization.md`, `events.md`, `licensing.md`, `database.md`, `features.md`, `system-flow.md`).

@@ -1,8 +1,8 @@
 //! Database access layer.
 //!
-//! All PostgreSQL access must go through this module. Domain repositories
-//! are not implemented yet. SQL migration files live in the repository-root
-//! `migrations/` directory (SQLx standard), not under this Rust source tree.
+//! All PostgreSQL access must go through this module. SQL migration files live
+//! in the repository-root `migrations/` directory (SQLx standard), not under
+//! this Rust source tree.
 
 mod config;
 mod pool;

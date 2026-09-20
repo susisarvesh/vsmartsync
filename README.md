@@ -12,8 +12,9 @@ Vsmart Sync is an enterprise-grade local desktop application for access control.
 
 ```
 src/                         React UI
-  pages/                     Screens
-  components/                UI pieces
+  components/ui/             shadcn-style primitives (light theme)
+  components/layout/         App shell
+  pages/                     Dashboard, Users
   hooks/
   services/                  Tauri invoke only (never PostgreSQL or Matrix)
   types/

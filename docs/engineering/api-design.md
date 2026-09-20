@@ -16,7 +16,7 @@ Rules:
 - Every new command documents: auth requirement, validation, what is stored, audit need.
 - Breaking command payloads requires searching all `src/services` callers and tests.
 
-Existing commands (foundation): `get_app_info`, `get_database_status`, `connect_database`.
+Existing commands (foundation + users + devices): `get_app_info`, `get_database_status`, `connect_database`, `create_user`, `list_users`, `update_user` (name only), `deactivate_user`, `create_device`, `list_devices`, `update_device` (metadata only), `set_device_password`, `test_device_connection`. Device list/get responses never include password or ciphertext.
 
 ## 2. Device API — Matrix COSEC CGI
 

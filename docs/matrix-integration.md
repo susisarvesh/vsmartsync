@@ -1,6 +1,6 @@
 # Matrix integration
 
-**Status:** Adapter/client/model **stubs exist**. No HTTP calls are **IMPLEMENTED**. This document uses only behavior verified in **COSEC Devices API User Guide, Version 28 (30 October 2025)**.
+**Status:** Adapter/client exist. **IMPLEMENTED:** thin connectivity probe `GET /device.cgi/device-basic-config?action=get`. Broader CGI is not implemented. This document uses only behavior verified in **COSEC Devices API User Guide, Version 28 (30 October 2025)**.
 
 ## Adapter vs API
 

@@ -62,4 +62,5 @@ npm run build
 | [testing.md](testing.md) | What to test and how |
 | [observability.md](observability.md) | Logs, audit, tracing |
 | [performance.md](performance.md) | Queries, jobs, caching |
+| [ui-design.md](ui-design.md) | Enterprise desktop UI (light theme, shadcn) |
 | [code-review-checklist.md](code-review-checklist.md) | Final gate |

@@ -110,7 +110,7 @@ See [getting-started.md](getting-started.md) for OS prerequisites.
 |---|---|
 | [../AGENTS.md](../AGENTS.md) | Cursor/agent constitution (read first) |
 | [getting-started.md](getting-started.md) | Fresh-clone setup, commands, common problems |
-| [engineering/ENGINEERING_GUIDELINES.md](engineering/ENGINEERING_GUIDELINES.md) | How to write code (standards, security, tests) |
+| [engineering/ENGINEERING_GUIDELINES.md](engineering/ENGINEERING_GUIDELINES.md) | How to write code (standards, security, tests, UI) |
 | [architecture/README.md](architecture/README.md) | Architecture, C4, ADRs, module boundaries |
 | [features.md](features.md) | Planned product features (MVP / post-MVP / future) |
 | [system-flow.md](system-flow.md) | End-to-end flows and Mermaid diagrams |

@@ -1,6 +1,6 @@
 # Modules
 
-**Status:** Module **folders exist** under `src-tauri/src/`. Domain services live in `src-tauri/src/domains/`. Behavior inside them is **PLANNED** except `common` (app info), `database` (config/pool/migrate), and `commands` (`get_app_info`).
+**Status:** Module **folders exist** under `src-tauri/src/`. Domain services live in `src-tauri/src/domains/`. **IMPLEMENTED:** `common` (app info, device password vault), `database` (config/pool/migrate/users+devices repositories), `commands` (`get_app_info`, database status, users, devices), `domains/users`, `domains/devices`, thin `matrix` connectivity probe. Other domains are **PLANNED**.
 
 Each domain is a module in **one** Rust crate. That is a modular monolith, not microservices.
 
@@ -33,9 +33,11 @@ Domain services live under `src-tauri/src/domains/` (`crate::domains::users`, an
 | | |
 |---|---|
 | **Responsibility** | Application user records (people who get access). |
-| **Owns** | User CRUD, activation, mapping policy to device `user-id` / `ref-user-id`. |
-| **Must not own** | HTTP to `/device.cgi/users` (that is the adapter); credential template bytes (that is `credentials`). |
-| **Depends on** | `database`, `common`, `audit`. Sync uses `synchronization` + `matrix`. |
+| **Owns** | Create, list, rename, deactivate (`active` / `inactive`). |
+| **Must not own** | HTTP to `/device.cgi/users`; credential templates; Matrix `user-id` mapping. |
+| **Depends on** | `database` user repository. |
+
+**IMPLEMENTED** for this slice. Deactivate is a domain operation; the UI cannot set status via update. No Matrix, credentials, or extra unique keys.
 
 ---
 
@@ -44,11 +46,13 @@ Domain services live under `src-tauri/src/domains/` (`crate::domains::users`, an
 | | |
 |---|---|
 | **Responsibility** | Registered COSEC devices and how this app reaches them. |
-| **Owns** | Address, port, display name, stored device credentials (Rust-side), last-seen **as data**. |
-| **Must not own** | CGI client implementation; event ingest. |
-| **Depends on** | `database`, `common`; reachability via `matrix` abstractions. |
+| **Owns** | Address, port, display name, encrypted device password (Rust-side), `connection_status` / `last_seen_at` as **application reachability** data. |
+| **Must not own** | CGI client implementation beyond calling `matrix` abstractions; event ingest; enrollment; sync. |
+| **Depends on** | `database` device repository, `common` password vault; reachability via `matrix` adapter. |
 
-Never return device passwords to Tauri/React.
+Never return device passwords or ciphertext to Tauri/React.
+
+**IMPLEMENTED** for this slice: create, list, update metadata, set password, test connection (`GET /device.cgi/device-basic-config?action=get`). `connection_status` is application reachability only (`unknown` / `online` / `offline`), not physical device health.
 
 ---
 
