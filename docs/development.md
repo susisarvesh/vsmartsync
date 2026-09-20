@@ -53,7 +53,7 @@ cargo test --manifest-path src-tauri/Cargo.toml -- --ignored --nocapture
 Packaged app (run on the OS you want to ship):
 
 ```bash
-npm run tauri build
+npm run package
 ```
 
 CI (`.github/workflows/ci.yml`) runs `cargo fmt`, Clippy, `cargo test`, and `npm run build` on macOS, Windows, and Ubuntu.
@@ -111,7 +111,7 @@ npm run dev
 
 ## Architecture change rule
 
-If a change needs a new crate, a queue product, or microservices, **explain why first**. Default is the modular monolith in [architecture.md](architecture.md).
+If a change needs a new crate, a queue product, or microservices, **explain why first**. Default is the modular monolith in [architecture/overview.md](architecture/overview.md). Agents must follow `/AGENTS.md` and `docs/engineering/`.
 
 ## Local desktop reminder
 

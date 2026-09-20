@@ -83,7 +83,7 @@ Never return device passwords to Tauri/React.
 | **Must not own** | CGI details; UI rendering. |
 | **Depends on** | All domain repositories it must push; `matrix` adapter; `audit`. |
 
-There is no Matrix “sync module.” This module **is** the sync system. See [synchronization.md](synchronization.md).
+There is no Matrix “sync module.” This module **is** the sync system. See [synchronization.md](../synchronization.md).
 
 ---
 
@@ -96,7 +96,7 @@ There is no Matrix “sync module.” This module **is** the sync system. See [s
 | **Must not own** | Access-control decisions; pretending TCP recovery uses TCP. |
 | **Depends on** | `devices`, `database`, `matrix`. |
 
-See [events.md](events.md).
+See [events.md](../events.md).
 
 ---
 
@@ -120,7 +120,7 @@ See [events.md](events.md).
 | **Must not own** | Matrix communication; secrets in React. |
 | **Depends on** | OS USB APIs / vendor SDK (**not chosen yet**), `common`. |
 
-**NOT implemented.** See [licensing.md](licensing.md).
+**NOT implemented.** See [licensing.md](../licensing.md).
 
 ---
 

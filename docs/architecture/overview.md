@@ -126,7 +126,7 @@ The desktop application does **not** necessarily perform every real-time biometr
 
 ### USB licensing
 
-**PLANNED.** See [licensing.md](licensing.md).
+**PLANNED.** See [licensing.md](../licensing.md).
 
 **Responsibility:** prove the workstation is authorized to run protected features.
 
@@ -158,7 +158,11 @@ src-tauri/src/
   matrix/                    COSEC Devices API boundary
     adapter, client, models
 migrations/                  SQLx migrations (empty of tables today)
-docs/                        Architecture and setup
+docs/
+  engineering/               Binding coding constitution
+  architecture/              System design, C4, ADRs
+  *.md                       Product / Matrix / setup
+AGENTS.md                    Cursor/agent entry point
 ```
 
 This layout is **IMPLEMENTED**. Domain modules under `domains/` are placeholders until each service is built.

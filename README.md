@@ -27,7 +27,10 @@ src-tauri/src/               Rust modular monolith
   matrix/                    COSEC Devices API boundary
     adapter, client, models
 migrations/                  SQLx SQL files
-docs/                        Architecture and setup
+docs/
+  engineering/               Binding coding constitution
+  architecture/              System design, C4, ADRs
+AGENTS.md                    Cursor/agent entry point
 scripts/setup.mjs            First-run .env and local PostgreSQL
 ```
 
@@ -49,6 +52,8 @@ Rules already encoded in this foundation:
 
 See [docs/getting-started.md](docs/getting-started.md) for OS-specific packages (WebView2 on Windows, WebKitGTK on Linux, Xcode CLT on macOS).
 
+Engineering agents: read [AGENTS.md](AGENTS.md) before changing code.
+
 ## Setup (any OS)
 
 ```bash
@@ -56,6 +61,14 @@ npm install && npm start
 ```
 
 That one line installs dependencies, creates `.env` if needed, prepares the local PostgreSQL database when `psql` is available, and opens the native **Vsmart Sync** window. PostgreSQL must already be installed and running on `127.0.0.1:5432`. Do not use Docker. Do not open `http://127.0.0.1:1420` in a browser.
+
+## Packaged executable (this computer)
+
+```bash
+npm run package
+```
+
+That builds a native installer for **the OS you run it on** (macOS `.app`/`.dmg`, Windows `.msi`/`.exe`, Linux `.deb`/AppImage). Recipients do not need Node or Rust. They still need local PostgreSQL on port 5432. Run the command once per OS you want to ship; one Mac cannot produce a Windows or Linux installer.
 
 ## Current implementation status
 

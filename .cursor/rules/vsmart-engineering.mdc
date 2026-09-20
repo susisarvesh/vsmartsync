@@ -1,0 +1,21 @@
+---
+description: Vsmart Sync engineering constitution — read AGENTS.md and docs before changing code
+alwaysApply: true
+---
+
+# Vsmart Sync
+
+Before designing or modifying anything, read `AGENTS.md`. Then read the relevant files under `docs/engineering/` and `docs/architecture/`.
+
+This is a Tauri 2 + React + Rust modular monolith with local PostgreSQL. It is not a cloud API, not Python, and not microservices.
+
+Hard rules:
+
+- React talks to Rust only through Tauri commands (`src/services`). Never PostgreSQL or Matrix HTTP from the UI.
+- Matrix `device.cgi` stays inside `src-tauri/src/matrix/`. Do not invent endpoints.
+- SQL stays inside `src-tauri/src/database/` (repositories). Use migrations in `migrations/`.
+- No secrets in git, logs, or frontend responses.
+- Implement one domain service at a time. Do not over-abstract.
+- Use a design pattern only when the problem needs it.
+
+If a request conflicts with these docs, stop and name the conflict.

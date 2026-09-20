@@ -53,7 +53,7 @@ npm run build
 
 Live Postgres: `cargo test --manifest-path src-tauri/Cargo.toml -- --ignored --nocapture`
 
-Packaged app: `npm run tauri build`
+Packaged executable for this computer: `npm run package` (same as `npm run tauri build`). Output is under `src-tauri/target/release/bundle/`. Recipients do not need Node or Rust. They still need local PostgreSQL on `127.0.0.1:5432`. Build on each OS you ship; this command does not cross-compile.
 
 Frontend-only (no Rust window): `npm run dev`
 

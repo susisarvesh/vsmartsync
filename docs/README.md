@@ -108,17 +108,18 @@ See [getting-started.md](getting-started.md) for OS prerequisites.
 
 | Document | Contents |
 |---|---|
+| [../AGENTS.md](../AGENTS.md) | Cursor/agent constitution (read first) |
 | [getting-started.md](getting-started.md) | Fresh-clone setup, commands, common problems |
-| [architecture.md](architecture.md) | Modular monolith, layers, and boundaries |
+| [engineering/ENGINEERING_GUIDELINES.md](engineering/ENGINEERING_GUIDELINES.md) | How to write code (standards, security, tests) |
+| [architecture/README.md](architecture/README.md) | Architecture, C4, ADRs, module boundaries |
 | [features.md](features.md) | Planned product features (MVP / post-MVP / future) |
 | [system-flow.md](system-flow.md) | End-to-end flows and Mermaid diagrams |
-| [modules.md](modules.md) | Planned Rust modules and ownership |
 | [database.md](database.md) | Planned entities and data rules (no final schema) |
 | [matrix-integration.md](matrix-integration.md) | Matrix adapter vs Matrix API (verified endpoints only) |
 | [synchronization.md](synchronization.md) | Desired-state sync jobs (application-owned) |
 | [events.md](events.md) | TCP events, HTTP recovery, persistence |
 | [licensing.md](licensing.md) | Planned USB license architecture |
-| [development.md](development.md) | Standards, verification commands, build sequence |
+| [development.md](development.md) | Build sequence and verification commands |
 
 ## Source of Matrix API facts
 
