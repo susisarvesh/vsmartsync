@@ -1,13 +1,21 @@
-import { Badge } from "@/components/ui/badge";
+import { DatabaseStatusControl } from "@/components/DatabaseStatusControl";
 import type { DatabaseStatus } from "@/types/database";
 
 type AppTopBarProps = {
   database: DatabaseStatus | null;
+  databaseLoading?: boolean;
+  databaseError?: string | null;
+  retrying?: boolean;
+  onRetryDatabase?: () => void;
 };
 
-export function AppTopBar({ database }: AppTopBarProps) {
-  const connected = Boolean(database?.connected);
-
+export function AppTopBar({
+  database,
+  databaseLoading = false,
+  databaseError = null,
+  retrying = false,
+  onRetryDatabase,
+}: AppTopBarProps) {
   return (
     <header className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-card px-4">
       <div className="min-w-0">
@@ -18,20 +26,14 @@ export function AppTopBar({ database }: AppTopBarProps) {
           Local access-control workstation
         </p>
       </div>
-      <div className="flex items-center gap-2">
-        {database ? (
-          <Badge variant={connected ? "success" : "warning"}>
-            <span aria-hidden>●</span>
-            <span>
-              {connected
-                ? `PostgreSQL · ${database.host}:${database.port}`
-                : "PostgreSQL unavailable"}
-            </span>
-          </Badge>
-        ) : (
-          <Badge>Checking database…</Badge>
-        )}
-      </div>
+      <DatabaseStatusControl
+        database={database}
+        loading={databaseLoading}
+        error={databaseError}
+        retrying={retrying}
+        onRetry={onRetryDatabase}
+        size="sm"
+      />
     </header>
   );
 }

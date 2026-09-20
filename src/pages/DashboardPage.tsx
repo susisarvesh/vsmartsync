@@ -1,7 +1,6 @@
-import { Database, Users } from "lucide-react";
+import { Users } from "lucide-react";
+import { DatabaseStatusControl } from "@/components/DatabaseStatusControl";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { PostgresSetupCard } from "@/components/PostgresSetupCard";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAppInfo } from "@/hooks/useAppInfo";
 import type { DatabaseStatus } from "@/types/database";
@@ -43,40 +42,22 @@ export function DashboardPage({
 
       <div className="grid gap-3 md:grid-cols-2">
         <section className="rounded-lg border border-border bg-card p-4">
-          <div className="flex items-center gap-2">
-            <Database className="h-4 w-4 text-muted-foreground" aria-hidden />
-            <h3 className="text-sm font-semibold">PostgreSQL</h3>
-          </div>
-          {databaseLoading && !database ? (
-            <p className="mt-3 text-sm text-muted-foreground">
-              Checking local database…
-            </p>
-          ) : null}
-          {databaseError ? (
-            <p className="mt-3 text-sm text-destructive" role="alert">
-              {databaseError}
-            </p>
-          ) : null}
-          {database ? (
-            <div className="mt-3 space-y-2">
-              <Badge variant={connected ? "success" : "warning"}>
-                <span aria-hidden>●</span>
-                {connected ? "Connected" : "Unavailable"}
-              </Badge>
-              <p className="text-sm text-muted-foreground">{database.message}</p>
-              {!connected ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={onRetryDatabase}
-                  disabled={retrying}
-                >
-                  {retrying ? "Connecting…" : "Try again"}
-                </Button>
-              ) : null}
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold">PostgreSQL</h3>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Click status for details
+              </p>
             </div>
-          ) : null}
+            <DatabaseStatusControl
+              database={database}
+              loading={databaseLoading}
+              error={databaseError}
+              retrying={retrying}
+              onRetry={onRetryDatabase}
+              size="md"
+            />
+          </div>
         </section>
 
         <section className="rounded-lg border border-border bg-card p-4">
@@ -103,16 +84,6 @@ export function DashboardPage({
           ) : null}
         </section>
       </div>
-
-      {database && !database.connected ? (
-        <div className="mt-4">
-          <PostgresSetupCard
-            status={database}
-            retrying={retrying}
-            onRetry={onRetryDatabase}
-          />
-        </div>
-      ) : null}
     </div>
   );
 }
