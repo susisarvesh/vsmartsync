@@ -1,24 +1,16 @@
-//! Matrixcosec application library.
+//! Vsmart Sync application library.
 //!
 //! This crate is a modular monolith. Domain modules are placeholders until
 //! their services are implemented. React talks to this crate only through
 //! Tauri commands — never to PostgreSQL or Matrix devices.
 
-mod audit;
-mod auth;
 mod commands;
 mod common;
-mod credentials;
 pub mod database;
-mod devices;
-mod enrollments;
-mod events;
-mod licensing;
+mod domains;
 mod matrix;
-mod synchronization;
-mod users;
 
-use database::DatabaseConfig;
+use crate::common::load_env_files;
 use tauri::Manager;
 
 fn init_tracing() {
@@ -32,38 +24,48 @@ fn init_tracing() {
         .try_init();
 }
 
-fn load_env_files() {
-    // `tauri dev` typically uses src-tauri as the working directory.
-    let _ = dotenvy::from_filename("../.env");
-    let _ = dotenvy::dotenv();
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     init_tracing();
     load_env_files();
 
-    tracing::info!(stage = "foundation", "starting matrixcosec");
+    tracing::info!(stage = "foundation", "starting vsmart sync");
 
     tauri::Builder::default()
         .setup(|app| {
-            let config = DatabaseConfig::from_env().map_err(|error| {
-                tracing::error!(error = %error, "database configuration is invalid");
-                error
-            })?;
+            app.manage(database::DatabaseRuntime::initialize());
 
-            tracing::info!("connecting to postgresql and running migrations");
-            let pool = tauri::async_runtime::block_on(database::connect_and_migrate(&config))
-                .map_err(|error| {
-                    tracing::error!(error = %error, "failed to initialize postgresql");
-                    error
-                })?;
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Regular);
 
-            app.manage(pool);
-            tracing::info!("postgresql pool is ready");
+            bring_main_window_forward(app);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![commands::get_app_info])
+        .invoke_handler(tauri::generate_handler![
+            commands::get_app_info,
+            commands::get_database_status,
+            commands::connect_database
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Show and focus the native window on macOS, Windows, and Linux.
+///
+/// IDE terminals often start the process without activating the GUI. macOS also
+/// needs a regular activation policy so the app appears in the Dock.
+fn bring_main_window_forward(app: &tauri::App) {
+    if let Some(window) = app.get_webview_window("main") {
+        if let Err(error) = window.show() {
+            tracing::warn!(error = %error, "failed to show main window");
+        }
+        if let Err(error) = window.unminimize() {
+            tracing::warn!(error = %error, "failed to unminimize main window");
+        }
+        if let Err(error) = window.set_focus() {
+            tracing::warn!(error = %error, "failed to focus main window");
+        }
+    } else {
+        tracing::error!("main desktop window was not created");
+    }
 }

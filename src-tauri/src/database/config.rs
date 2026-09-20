@@ -5,7 +5,7 @@ use thiserror::Error;
 /// PostgreSQL connection settings loaded from the environment.
 ///
 /// Prefer `DATABASE_URL`. `POSTGRES_*` variables are accepted as an alternative
-/// for local Docker Compose development.
+/// for a local PostgreSQL install.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DatabaseConfig {
     url: String,
@@ -109,6 +109,49 @@ impl DatabaseConfig {
     pub fn url(&self) -> &str {
         &self.url
     }
+
+    /// Host, port, database, and user for the UI. Never includes the password.
+    pub fn public_target(&self) -> Option<PublicDatabaseTarget> {
+        parse_public_target(&self.url)
+    }
+}
+
+/// Non-secret connection target shown in the desktop UI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicDatabaseTarget {
+    pub host: String,
+    pub port: u16,
+    pub database: String,
+    pub user: String,
+}
+
+fn parse_public_target(url: &str) -> Option<PublicDatabaseTarget> {
+    let rest = url
+        .strip_prefix("postgres://")
+        .or_else(|| url.strip_prefix("postgresql://"))?;
+    let (auth, host_and_db) = rest.split_once('@')?;
+    let user = auth.split(':').next()?.to_string();
+    if user.is_empty() {
+        return None;
+    }
+    let (hostport, db_and_query) = host_and_db.split_once('/')?;
+    let database = db_and_query.split(['?', '#']).next()?.trim().to_string();
+    if database.is_empty() {
+        return None;
+    }
+    let (host, port) = match hostport.rsplit_once(':') {
+        Some((host, port)) => (host.to_string(), port.parse().ok()?),
+        None => (hostport.to_string(), 5432),
+    };
+    if host.is_empty() || port == 0 {
+        return None;
+    }
+    Some(PublicDatabaseTarget {
+        host,
+        port,
+        database,
+        user,
+    })
 }
 
 fn required_env(key: &str) -> Option<String> {
@@ -146,11 +189,11 @@ mod tests {
     #[test]
     fn from_url_accepts_postgres_schemes() {
         let config =
-            DatabaseConfig::from_url("postgres://matrixcosec:change-me@localhost:5432/matrixcosec")
+            DatabaseConfig::from_url("postgres://vsmart_sync:change-me@localhost:5432/vsmart_sync")
                 .expect("url");
         assert!(config.url().starts_with("postgres://"));
 
-        DatabaseConfig::from_url("postgresql://matrixcosec:change-me@localhost:5432/matrixcosec")
+        DatabaseConfig::from_url("postgresql://vsmart_sync:change-me@localhost:5432/vsmart_sync")
             .expect("postgresql scheme");
     }
 
@@ -171,14 +214,14 @@ mod tests {
         let config = DatabaseConfig::from_parts(
             "localhost",
             5432,
-            "matrixcosec",
-            "matrixcosec",
+            "vsmart_sync",
+            "vsmart_sync",
             "change-me",
         )
         .expect("parts");
         assert_eq!(
             config.url(),
-            "postgres://matrixcosec:change-me@localhost:5432/matrixcosec"
+            "postgres://vsmart_sync:change-me@localhost:5432/vsmart_sync"
         );
     }
 
@@ -208,5 +251,19 @@ mod tests {
             DatabaseConfig::from_parts("localhost", 5432, "db", "user:name", "pw").unwrap_err(),
             DatabaseConfigError::UnsafeUrlCredentials
         );
+    }
+
+    #[test]
+    fn public_target_omits_password() {
+        let config =
+            DatabaseConfig::from_url("postgres://vsmart_sync:change-me@127.0.0.1:5432/vsmart_sync")
+                .expect("url");
+        let target = config.public_target().expect("target");
+        assert_eq!(target.host, "127.0.0.1");
+        assert_eq!(target.port, 5432);
+        assert_eq!(target.database, "vsmart_sync");
+        assert_eq!(target.user, "vsmart_sync");
+        assert!(!target.host.contains("change-me"));
+        assert_ne!(target.user, "change-me");
     }
 }

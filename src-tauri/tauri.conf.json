@@ -1,25 +1,36 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Matrixcosec",
+  "productName": "Vsmart Sync",
   "version": "0.1.0",
-  "identifier": "com.matrixcosec.app",
+  "identifier": "com.vsmart.sync.app",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://127.0.0.1:1420",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
   "app": {
     "windows": [
       {
-        "title": "Matrixcosec",
-        "width": 800,
-        "height": 600
+        "label": "main",
+        "title": "Vsmart Sync",
+        "width": 960,
+        "height": 640,
+        "minWidth": 800,
+        "minHeight": 560,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true,
+        "focus": true,
+        "visible": true,
+        "decorations": true,
+        "dragDropEnabled": false
       }
     ],
     "security": {
       "csp": null
-    }
+    },
+    "macOSPrivateApi": false
   },
   "bundle": {
     "active": true,
@@ -30,6 +41,15 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    }
   }
 }

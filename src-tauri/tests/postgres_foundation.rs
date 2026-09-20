@@ -1,13 +1,13 @@
 //! Live PostgreSQL checks for the database foundation.
 //!
-//! These tests require a running instance (Docker Compose). They are ignored by
+//! These tests require a running local PostgreSQL instance. They are ignored by
 //! default so `cargo test` stays offline-friendly.
 
-use matrixcosec_lib::database::{connect_and_migrate, ping, DatabaseConfig};
+use vsmart_sync_lib::database::{connect_and_migrate, ping, DatabaseConfig};
 
 fn load_test_config() -> DatabaseConfig {
     DatabaseConfig::from_url(std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        "postgres://matrixcosec:change-me@127.0.0.1:5433/matrixcosec".to_string()
+        "postgres://vsmart_sync:change-me@127.0.0.1:5432/vsmart_sync".to_string()
     }))
     .expect("test database url")
 }

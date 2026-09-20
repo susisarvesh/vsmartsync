@@ -1,13 +1,13 @@
 [package]
-name = "matrixcosec"
+name = "vsmart_sync"
 version = "0.1.0"
 description = "Local desktop access-control application (project foundation)"
-authors = ["Matrixcosec"]
+authors = ["Vsmart Sync"]
 edition = "2021"
 
 [lib]
 # The `_lib` suffix is required so the lib name does not collide with the bin name on Windows.
-name = "matrixcosec_lib"
+name = "vsmart_sync_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

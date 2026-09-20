@@ -1,0 +1,12 @@
+# Normalize text files so macOS, Windows, and Linux check out the same sources.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.icns binary
+*.svg binary
+*.woff binary
+*.woff2 binary

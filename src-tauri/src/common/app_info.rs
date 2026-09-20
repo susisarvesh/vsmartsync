@@ -11,7 +11,7 @@ pub struct AppInfo {
 
 pub fn app_info() -> AppInfo {
     AppInfo {
-        name: env!("CARGO_PKG_NAME").to_string(),
+        name: "Vsmart Sync".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         description: env!("CARGO_PKG_DESCRIPTION").to_string(),
         stage: "foundation".to_string(),
@@ -25,7 +25,7 @@ mod tests {
     #[test]
     fn app_info_uses_package_metadata() {
         let info = app_info();
-        assert_eq!(info.name, "matrixcosec");
+        assert_eq!(info.name, "Vsmart Sync");
         assert_eq!(info.version, env!("CARGO_PKG_VERSION"));
         assert_eq!(info.stage, "foundation");
     }

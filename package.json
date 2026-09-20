@@ -1,9 +1,12 @@
 {
-  "name": "matrixcosec",
+  "name": "vsmart-sync",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "prestart": "node scripts/setup.mjs",
+    "start": "tauri dev",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",

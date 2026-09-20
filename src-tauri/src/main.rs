@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    matrixcosec_lib::run()
+    vsmart_sync_lib::run()
 }

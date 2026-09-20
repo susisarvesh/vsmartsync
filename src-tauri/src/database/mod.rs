@@ -6,9 +6,11 @@
 
 mod config;
 mod pool;
+mod runtime;
 
-pub use config::{DatabaseConfig, DatabaseConfigError};
+pub use config::{DatabaseConfig, DatabaseConfigError, PublicDatabaseTarget};
 pub use pool::{connect, connect_and_migrate, ping, run_migrations, DatabaseError, DbPool};
+pub use runtime::{DatabaseRuntime, DatabaseStatus};
 
 pub mod models;
 pub mod repositories;

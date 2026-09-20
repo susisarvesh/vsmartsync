@@ -17,8 +17,8 @@ body {
 
 .container {
   margin: 0 auto;
-  max-width: 40rem;
-  padding: 12vh 1.5rem 2rem;
+  max-width: 46rem;
+  padding: 8vh 1.5rem 2rem;
   display: flex;
   flex-direction: column;
   gap: 1rem;
@@ -46,6 +46,68 @@ h1 {
   background: #fff;
   display: grid;
   gap: 0.75rem;
+}
+
+.setup-card {
+  margin: 0;
+  padding: 1rem 1.25rem;
+  border: 1px solid #d8d8d8;
+  border-radius: 8px;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.setup-card h2,
+.setup-card h3 {
+  margin: 0;
+}
+
+.setup-card-ok {
+  border-color: #1f7a3a;
+}
+
+.setup-ok {
+  margin: 0;
+  color: #1f7a3a;
+}
+
+.setup-meta {
+  margin: 0;
+  color: #444;
+  font-size: 0.95rem;
+}
+
+.setup-steps {
+  margin: 0;
+  padding-left: 1.25rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.setup-steps code,
+.setup-card code {
+  font-size: 0.9rem;
+}
+
+.setup-other {
+  margin-top: 0.25rem;
+}
+
+.setup-card button {
+  align-self: flex-start;
+  padding: 0.45rem 0.9rem;
+  border: 1px solid #222;
+  border-radius: 6px;
+  background: #111;
+  color: #fff;
+  cursor: pointer;
+}
+
+.setup-card button:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .info-card div {
@@ -79,5 +141,24 @@ dd {
   .info-card {
     border-color: #444;
     background: #1f1f1f;
+  }
+
+  .setup-card {
+    border-color: #444;
+    background: #1f1f1f;
+  }
+
+  .setup-ok {
+    color: #7dcea0;
+  }
+
+  .setup-meta {
+    color: #c8c8c8;
+  }
+
+  .setup-card button {
+    border-color: #f6f6f6;
+    background: #f6f6f6;
+    color: #111;
   }
 }

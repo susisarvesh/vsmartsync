@@ -1,4 +1,4 @@
-# Matrixcosec
+# Vsmart Sync
 
 Local desktop access-control application for Matrix hardware.
 
@@ -6,19 +6,29 @@ Local desktop access-control application for Matrix hardware.
 
 ## Purpose
 
-Matrixcosec is an enterprise-grade local desktop application for access control. The UI runs in Tauri/React. Business logic, PostgreSQL access, and Matrix device integration run in Rust.
+Vsmart Sync is an enterprise-grade local desktop application for access control. The UI runs in Tauri/React. Business logic, PostgreSQL access, and Matrix device integration run in Rust.
 
-## Architecture
+## Layout
 
 ```
-Tauri
-  ├── React + TypeScript (Vite)
-  └── Rust modular monolith (src-tauri)
-        ├── auth, users, devices, credentials, enrollments
-        ├── synchronization, events, audit, licensing
-        ├── matrix (client / adapter / models)
-        ├── database (config, pool, models, repositories)
-        └── common
+src/                         React UI
+  pages/                     Screens
+  components/                UI pieces
+  hooks/
+  services/                  Tauri invoke only (never PostgreSQL or Matrix)
+  types/
+src-tauri/src/               Rust modular monolith
+  commands.rs                IPC surface for React
+  common/                    Shared helpers
+  database/                  PostgreSQL config, pool, future models/repos
+  domains/                   Business services (placeholders until built)
+    auth, users, devices, credentials, enrollments
+    synchronization, events, audit, licensing
+  matrix/                    COSEC Devices API boundary
+    adapter, client, models
+migrations/                  SQLx SQL files
+docs/                        Architecture and setup
+scripts/setup.mjs            First-run .env and local PostgreSQL
 ```
 
 Rules already encoded in this foundation:
@@ -30,52 +40,22 @@ Rules already encoded in this foundation:
 - Matrix HTTP access will go only through the Matrix adapter (not implemented yet).
 - SQL migrations are version-controlled in `migrations/`.
 
-This repository uses the standard Tauri 2 layout (`src/` frontend, `src-tauri/` backend) rather than nesting both under a single `src/` folder.
-
 ## Prerequisites
 
 - Node.js 20+
 - Rust stable (edition 2021)
-- Docker and Docker Compose (local PostgreSQL)
-- Tauri system dependencies for your OS: https://v2.tauri.app/start/prerequisites/
+- PostgreSQL 16+ installed and running **locally** (not Docker)
+- Tauri system dependencies for **macOS, Windows, and Linux**: https://v2.tauri.app/start/prerequisites/
 
-## Environment configuration
+See [docs/getting-started.md](docs/getting-started.md) for OS-specific packages (WebView2 on Windows, WebKitGTK on Linux, Xcode CLT on macOS).
 
-1. Copy `.env.example` to `.env`.
-2. Change the placeholder password before any non-local use.
-3. Keep `DATABASE_URL` in sync with the `POSTGRES_*` variables.
-
-`.env` is gitignored. The Rust process loads `.env` from the project root or from `src-tauri/` (the usual `tauri dev` working directory).
-
-## Start PostgreSQL
+## Setup (any OS)
 
 ```bash
-docker compose up -d
-docker compose ps
+npm install && npm start
 ```
 
-PostgreSQL is published on host port **5433** by default (`127.0.0.1:5433` → container `5432`) so it does not collide with a local PostgreSQL on 5432. Override `POSTGRES_PORT` in `.env` if needed.
-
-Stop it with `docker compose down`. Data is stored in the named volume `matrixcosec_postgres_data`.
-
-## Run the Tauri application
-
-```bash
-npm install
-cp .env.example .env
-docker compose up -d
-npm run tauri dev
-```
-
-The window should show application metadata from the Rust command `get_app_info()`.
-
-Frontend-only (no Rust window):
-
-```bash
-npm run dev
-```
-
-That Vite preview cannot invoke Tauri commands.
+That one line installs dependencies, creates `.env` if needed, prepares the local PostgreSQL database when `psql` is available, and opens the native **Vsmart Sync** window. PostgreSQL must already be installed and running on `127.0.0.1:5432`. Do not use Docker. Do not open `http://127.0.0.1:1420` in a browser.
 
 ## Current implementation status
 
@@ -84,7 +64,7 @@ Implemented:
 - Tauri 2 + React + TypeScript + Vite scaffold
 - Rust modular-monolith module layout
 - SQLx PostgreSQL pool, configuration loading, and migration runner
-- Docker Compose PostgreSQL
+- Local PostgreSQL (no Docker)
 - One test command: `get_app_info`
 
 Not implemented:

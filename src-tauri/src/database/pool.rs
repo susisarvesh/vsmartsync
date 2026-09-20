@@ -17,9 +17,16 @@ pub enum DatabaseError {
 }
 
 pub async fn connect(config: &DatabaseConfig) -> Result<DbPool, DatabaseError> {
+    connect_with_timeout(config, Duration::from_secs(3)).await
+}
+
+async fn connect_with_timeout(
+    config: &DatabaseConfig,
+    timeout: Duration,
+) -> Result<DbPool, DatabaseError> {
     PgPoolOptions::new()
         .max_connections(5)
-        .acquire_timeout(Duration::from_secs(10))
+        .acquire_timeout(timeout)
         .connect(config.url())
         .await
         .map_err(DatabaseError::Connect)
