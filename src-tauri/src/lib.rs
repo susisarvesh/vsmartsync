@@ -59,7 +59,13 @@ pub fn run() {
             commands::list_credentials,
             commands::get_credential,
             commands::update_credential,
-            commands::set_credential_status
+            commands::set_credential_status,
+            commands::create_enrollment,
+            commands::list_enrollments,
+            commands::get_enrollment,
+            commands::cancel_enrollment,
+            commands::revoke_enrollment,
+            commands::retry_enrollment
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

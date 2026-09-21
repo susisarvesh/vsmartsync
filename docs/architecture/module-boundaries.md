@@ -1,6 +1,6 @@
 # Modules
 
-**Status:** Module **folders exist** under `src-tauri/src/`. Domain services live in `src-tauri/src/domains/`. **IMPLEMENTED:** `common` (app info, secret vault), `database` (config/pool/migrate/users+devices+credentials repositories), `commands` (foundation, users, devices, credentials), `domains/users`, `domains/devices`, `domains/credentials`, thin `matrix` connectivity probe. Other domains are **PLANNED**.
+**Status:** Module **folders exist** under `src-tauri/src/`. Domain services live in `src-tauri/src/domains/`. **IMPLEMENTED:** `common` (app info, secret vault), `database` (users+devices+credentials+enrollments+device_users), `commands` (foundation, users, devices, credentials, enrollments), `domains/users`, `domains/devices`, `domains/credentials`, `domains/enrollments`, `domains/device_users`, `matrix` (Client foundation + probe + Adapter `set_user`/`set_pin`). Other domains are **PLANNED**. `set_card` / Sync deferred.
 
 Each domain is a module in **one** Rust crate. That is a modular monolith, not microservices.
 
@@ -37,7 +37,7 @@ Domain services live under `src-tauri/src/domains/` (`crate::domains::users`, an
 | **Must not own** | HTTP to `/device.cgi/users`; credential templates; Matrix `user-id` mapping. |
 | **Depends on** | `database` user repository. |
 
-**IMPLEMENTED** for this slice. Deactivate is a domain operation; the UI cannot set status via update. No Matrix, credentials, or extra unique keys.
+**IMPLEMENTED** for this slice. Deactivate is a domain operation; the UI cannot set status via update. No Matrix CGI from this module. Matrix identity mapping lives in `device_users` (ADR-013).
 
 ---
 
@@ -75,10 +75,29 @@ Never return plaintext values, ciphertext, or digests to Tauri/React. PIN respon
 
 | | |
 |---|---|
-| **Responsibility** | Enrollment **sessions** on a chosen device. |
-| **Owns** | Start session, correlate device events to a session, session status. |
-| **Must not own** | Generic credential storage; treating enrolluser as a template download. |
-| **Depends on** | `users`, `devices`, `credentials`, `events` (outcome), `matrix`. |
+| **Responsibility** | Durable desired assignment of a user credential to a device. |
+| **Owns** | Create/list/get; lifecycle `pending`/`active`/`failed`/`cancelled`/`revoked`; cancel/retry/revoke. |
+| **Must not own** | Matrix HTTP; sync jobs/attempts; physical `enrolluser` sessions; credential storage. |
+| **Depends on** | `users`, `devices`, `credentials`, `database`. |
+
+Device online status is not required to create a pending assignment. Sync (future) applies desired state to Matrix.
+
+**IMPLEMENTED** for this slice. See ADR-010.
+
+---
+
+## `device_users`
+
+| | |
+|---|---|
+| **Responsibility** | Device-scoped Matrix identity mapping for application users. |
+| **Owns** | `ensure_mapping` (allocate `VS######` / ref-user-id), `mark_provisioned`, list/get. |
+| **Must not own** | Matrix HTTP; Sync jobs; React UI (none in v1); enrollment lifecycle. |
+| **Depends on** | `users`, `devices`, `database` (`device_users`, `device_id_sequences`). |
+
+Allocation ≠ provisioned. Sync (future) calls Matrix `set_user` then `mark_provisioned`. See ADR-013.
+
+**IMPLEMENTED** for this slice. No Tauri commands / UI.
 
 ---
 
@@ -138,8 +157,8 @@ This is the **integration boundary**. All COSEC Devices HTTP (and TCP event list
 
 | Submodule | Role |
 |---|---|
-| `matrix::adapter` | Application-facing operations: upsert user on device, start enroll, fetch events, send command. |
-| `matrix::client` | HTTP (and TCP) transport, basic auth, timeouts, text/XML parsing. |
+| `matrix::adapter` | Application-facing ops: `probe_basic_config`, `set_user`, `set_pin`. **Deferred:** `set_card`, enroll, events. |
+| `matrix::client` | HTTP transport, basic auth, timeouts, `Response-Code` evaluation. |
 | `matrix::models` | DTOs for CGI arguments/responses — **not** domain entities. |
 
 | | |

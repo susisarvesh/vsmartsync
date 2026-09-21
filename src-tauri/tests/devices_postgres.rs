@@ -6,8 +6,7 @@ use uuid::Uuid;
 use vsmart_sync_lib::database::repositories::DeviceRepository;
 use vsmart_sync_lib::database::{connect_and_migrate, DatabaseConfig};
 use vsmart_sync_lib::domains::devices::{
-    create_device, list_devices, set_device_password, update_device, ConnectionStatus,
-    DeviceError,
+    create_device, list_devices, set_device_password, update_device, ConnectionStatus, DeviceError,
 };
 use vsmart_sync_lib::DevicePasswordVault;
 
@@ -56,16 +55,9 @@ async fn devices_create_list_update_password() {
     assert!(!json.contains("password"));
     assert!(!json.contains("ciphertext"));
 
-    let updated = update_device(
-        &repo,
-        created.id,
-        "Lobby Updated",
-        &host,
-        8080,
-        "operator",
-    )
-    .await
-    .expect("update");
+    let updated = update_device(&repo, created.id, "Lobby Updated", &host, 8080, "operator")
+        .await
+        .expect("update");
     assert_eq!(updated.name, "Lobby Updated");
     assert_eq!(updated.username, "operator");
 
@@ -74,7 +66,11 @@ async fn devices_create_list_update_password() {
         .expect("password");
     assert_eq!(with_password.id, created.id);
 
-    let record = repo.find_by_id(created.id).await.expect("load").expect("exists");
+    let record = repo
+        .find_by_id(created.id)
+        .await
+        .expect("load")
+        .expect("exists");
     assert_ne!(record.password_ciphertext, b"rotated-secret");
     assert_eq!(
         vault.decrypt(&record.password_ciphertext).expect("decrypt"),
@@ -90,7 +86,11 @@ async fn devices_reject_invalid_and_duplicate() {
         .expect("postgresql should be reachable");
     let repo = DeviceRepository::new(pool);
     let vault = test_vault();
-    let host = format!("10.55.{}.{}", Uuid::new_v4().as_u128() % 200, Uuid::new_v4().as_u128() % 200);
+    let host = format!(
+        "10.55.{}.{}",
+        Uuid::new_v4().as_u128() % 200,
+        Uuid::new_v4().as_u128() % 200
+    );
 
     assert_eq!(
         create_device(&repo, &vault, "   ", &host, Some(80), "admin", "x")
@@ -99,17 +99,9 @@ async fn devices_reject_invalid_and_duplicate() {
         DeviceError::InvalidName
     );
     assert_eq!(
-        create_device(
-            &repo,
-            &vault,
-            "Door",
-            "http://evil",
-            Some(80),
-            "admin",
-            "x"
-        )
-        .await
-        .unwrap_err(),
+        create_device(&repo, &vault, "Door", "http://evil", Some(80), "admin", "x")
+            .await
+            .unwrap_err(),
         DeviceError::InvalidHost
     );
     assert_eq!(

@@ -7,8 +7,8 @@ use vsmart_sync_lib::database::repositories::{CredentialRepository, UserReposito
 use vsmart_sync_lib::database::{connect_and_migrate, DatabaseConfig};
 use vsmart_sync_lib::domains::credentials::{
     create_credential, get_credential, list_credentials, set_credential_status,
-    update_credential_value, CredentialListFilter, CredentialStatus, CredentialType,
-    CredentialError,
+    update_credential_value, CredentialError, CredentialListFilter, CredentialStatus,
+    CredentialType,
 };
 use vsmart_sync_lib::domains::users::create_user;
 use vsmart_sync_lib::SecretVault;
@@ -38,16 +38,9 @@ async fn credentials_create_list_update_deactivate() {
         .await
         .expect("user");
 
-    let card = create_credential(
-        &credentials,
-        &users,
-        &vault,
-        user.id,
-        "card",
-        "00 987654",
-    )
-    .await
-    .expect("card");
+    let card = create_credential(&credentials, &users, &vault, user.id, "card", "00 987654")
+        .await
+        .expect("card");
     assert_eq!(card.credential_type, CredentialType::Card);
     assert_eq!(card.masked_value.as_deref(), Some("••••7654"));
     assert_eq!(card.status, CredentialStatus::Active);
@@ -96,16 +89,9 @@ async fn credentials_reject_invalid_user_and_duplicates() {
     let vault = test_vault();
 
     assert_eq!(
-        create_credential(
-            &credentials,
-            &users,
-            &vault,
-            Uuid::nil(),
-            "card",
-            "5555"
-        )
-        .await
-        .unwrap_err(),
+        create_credential(&credentials, &users, &vault, Uuid::nil(), "card", "5555")
+            .await
+            .unwrap_err(),
         CredentialError::UserNotFound
     );
 
@@ -113,31 +99,17 @@ async fn credentials_reject_invalid_user_and_duplicates() {
         .await
         .expect("user");
     let card_number = format!("CARD{}", Uuid::new_v4().as_u128() % 1_000_000);
-    create_credential(
-        &credentials,
-        &users,
-        &vault,
-        user.id,
-        "card",
-        &card_number,
-    )
-    .await
-    .expect("first");
+    create_credential(&credentials, &users, &vault, user.id, "card", &card_number)
+        .await
+        .expect("first");
 
     let other = create_user(&users, &format!("Other {}", Uuid::new_v4()))
         .await
         .expect("other");
     assert_eq!(
-        create_credential(
-            &credentials,
-            &users,
-            &vault,
-            other.id,
-            "card",
-            &card_number
-        )
-        .await
-        .unwrap_err(),
+        create_credential(&credentials, &users, &vault, other.id, "card", &card_number)
+            .await
+            .unwrap_err(),
         CredentialError::Duplicate
     );
 

@@ -22,7 +22,7 @@ Top bar
 Sidebar (only modules that exist) | Main content
 ```
 
-Today navigation is **Dashboard**, **Users**, **Devices**, and **Credentials**. Do not add Enrollment, Sync, Audit, or Settings until those domains exist.
+Today navigation is **Dashboard**, **Users**, **Devices**, **Credentials**, and **Enrollments**. Do not add Sync, Audit, or Settings until those domains exist.
 
 ## Page pattern
 

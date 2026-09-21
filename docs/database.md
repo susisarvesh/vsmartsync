@@ -8,7 +8,7 @@
 |---|---|---|
 | Database | PostgreSQL 16+ (local install, not Docker) | **IMPLEMENTED** |
 | Access | SQLx (Rust), runtime Tokio, rustls | **IMPLEMENTED** |
-| Migrations | SQLx files in repository-root `migrations/` | **IMPLEMENTED** (`0001_create_users.sql`, `0002_create_devices.sql`, `0003_create_credentials.sql`) |
+| Migrations | SQLx files in repository-root `migrations/` | **IMPLEMENTED** (`0001`–`0005`) |
 | Dev host port | **5432** | **IMPLEMENTED** |
 
 There is no migrate-only npm script. The app runs `connect_and_migrate` at startup. Live check: `cargo test --manifest-path src-tauri/Cargo.toml -- --ignored`.
@@ -64,6 +64,45 @@ Migration `migrations/0003_create_credentials.sql`. Application system of record
 
 Indexes: `user_id`, `status`, `type` (list filters). Partial unique: one digest per card globally; one PIN per user.
 
+## Enrollments table (IMPLEMENTED)
+
+Migration `migrations/0004_create_enrollments.sql`. Durable desired assignment only (see ADR-010). No sync attempt fields. No Matrix IDs.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | UUID | PRIMARY KEY |
+| `user_id` | UUID | NOT NULL, FK → `users(id)` (RESTRICT) |
+| `credential_id` | UUID | NOT NULL, FK → `credentials(id)` (RESTRICT) |
+| `device_id` | UUID | NOT NULL, FK → `devices(id)` (RESTRICT) |
+| `status` | TEXT | NOT NULL, `pending` / `active` / `failed` / `cancelled` / `revoked` |
+| `cancelled_at` | TIMESTAMPTZ | NULL |
+| `revoked_at` | TIMESTAMPTZ | NULL |
+| `activated_at` | TIMESTAMPTZ | NULL |
+| `created_at` | TIMESTAMPTZ | NOT NULL |
+| `updated_at` | TIMESTAMPTZ | NOT NULL |
+
+Partial unique: one open row per `(credential_id, device_id)` where status ∈ pending/active/failed. Indexes for user, device+status, credential, status queues.
+
+## Device users table (IMPLEMENTED)
+
+Migration `migrations/0005_create_device_users.sql`. See [ADR-013](architecture/decisions/ADR-013-device-users.md).
+
+Maps application `users` ↔ Matrix identity **per device**. No UI in v1. Sync (future) calls `ensure_mapping` then `mark_provisioned` after `set_user`.
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | UUID | PRIMARY KEY |
+| `user_id` | UUID | NOT NULL, FK → `users(id)` RESTRICT |
+| `device_id` | UUID | NOT NULL, FK → `devices(id)` RESTRICT |
+| `matrix_user_id` | TEXT | NOT NULL, ≤15 alnum (`VS######`) |
+| `matrix_ref_user_id` | BIGINT | NOT NULL, CHECK 0…99999999 |
+| `provisioned_at` | TIMESTAMPTZ | NULL until Sync successfully applies `set_user` |
+| `created_at` / `updated_at` | TIMESTAMPTZ | NOT NULL |
+
+Uniques: `(user_id, device_id)`, `(device_id, matrix_user_id)`, `(device_id, matrix_ref_user_id)`.
+
+Companion table `device_id_sequences`: per-device `next_matrix_user_seq` (default 1) and `next_ref_user_id` (default 10000001).
+
 ## Planned entities
 
 These names are **conceptual**. They will become tables (and possibly extra join tables) after a schema design pass.
@@ -73,7 +112,10 @@ These names are **conceptual**. They will become tables (and possibly extra join
 | `users` | People in the application desired state | **IMPLEMENTED** |
 | `devices` | Registered COSEC doors / controllers | **IMPLEMENTED** |
 | `credentials` | Credential records belonging to users | **IMPLEMENTED** |
-| `enrollments` | Enrollment sessions (not the same as a stored credential) | **PLANNED** |
+| `enrollments` | Desired credential↔device assignments | **IMPLEMENTED** |
+| `device_users` | Device-scoped Matrix `user-id` / `ref-user-id` mapping | **IMPLEMENTED** (ADR-013) |
+| `device_id_sequences` | Per-device Matrix id counters | **IMPLEMENTED** (ADR-013) |
+| `enrollments` (sessions) | Live physical capture sessions | **PLANNED** (separate from assignment) |
 | `sync_jobs` | Units of work to push/reconcile state to a device | **PLANNED** |
 | `events` | Device-reported history (seq + rollover, payload) | **PLANNED** |
 | `audit_logs` | Actions taken **in this application** | **PLANNED** |

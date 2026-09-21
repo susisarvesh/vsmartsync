@@ -46,10 +46,7 @@ pub async fn create_credential(
         updated_at: now,
     };
 
-    credentials
-        .insert(&record)
-        .await
-        .map_err(map_db_error)?;
+    credentials.insert(&record).await.map_err(map_db_error)?;
 
     tracing::info!(
         credential_id = %record.id,
@@ -68,7 +65,9 @@ pub async fn list_credentials(
 ) -> Result<Vec<Credential>, CredentialError> {
     let query = CredentialListQuery {
         user_id: filter.user_id,
-        credential_type: filter.credential_type.map(|value| value.as_str().to_string()),
+        credential_type: filter
+            .credential_type
+            .map(|value| value.as_str().to_string()),
         status: filter.status.map(|value| value.as_str().to_string()),
     };
     credentials

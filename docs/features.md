@@ -12,7 +12,7 @@ Do not treat this list as a claim that screens or APIs already exist.
 | **Post-MVP** | After the first reviewable vertical slices work |
 | **Future / model-specific** | Depends on device variant or later product scope |
 
-Matrix behavior always **REQUIRES MATRIX DOCUMENTATION VERIFICATION** for the target door model. The COSEC Devices API guide is general; variants may omit features.
+Matrix behavior: architecture targets all guide-listed families; individual features remain model-specific. **Documented support ≠ hardware-verified support.** Always **REQUIRES MATRIX DOCUMENTATION VERIFICATION** / lab verification per path.
 
 ---
 
@@ -29,7 +29,7 @@ Matrix behavior always **REQUIRES MATRIX DOCUMENTATION VERIFICATION** for the ta
 | **Database** | Persist application users (planned `users` entity). |
 | **Matrix** | Push/update/delete via `/device.cgi/users` **when syncing a device** — not from the React form directly. |
 
-Device-side users use alphanumeric `user-id` and numeric `ref-user-id` (COSEC Devices API). Mapping between application UUIDs and those identifiers is **PLANNED** and must be designed with the schema. Exact field limits **REQUIRE MATRIX DOCUMENTATION VERIFICATION** per model.
+Device-side users use alphanumeric `user-id` (max 15) and numeric `ref-user-id` (max 8 digits). Mapping is **`device_users`** (**IMPLEMENTED**, ADR-013): device-local `VS######` / `10000001…`. Schema for Sync jobs remains **PLANNED**.
 
 ### 2. Device Management
 
@@ -40,7 +40,7 @@ Device-side users use alphanumeric `user-id` and numeric `ref-user-id` (COSEC De
 | **UI** | Add/edit device, connection test, status. |
 | **Backend** | Device service stores connection data; never returns device passwords to the UI. |
 | **Database** | Persist planned `devices` entity. |
-| **Matrix** | Optional read of `/device.cgi/device-basic-config` to confirm the device. |
+| **Matrix** | Reachability probe via `/device.cgi/device-basic-config` (**IMPLEMENTED** client foundation + `Response-Code=0` check). |
 
 ### 3. Basic Credential Management
 
@@ -55,18 +55,18 @@ Device-side users use alphanumeric `user-id` and numeric `ref-user-id` (COSEC De
 
 Distinguish **credential provisioning** (HTTP set/get of templates or card numbers) from an **enrollment session** (device prompts for a live finger/card/face). See [system-flow.md](system-flow.md).
 
-### 4. Enrollment
+### 4. Enrollment (desired assignment)
 
 | | |
 |---|---|
-| **What** | Start an enrollment session on a chosen device so the person presents a card, finger, palm, or face at the hardware. |
-| **Why** | Many credentials cannot be typed in; the device must capture them. |
-| **UI** | Pick user, device, credential type; show in-progress / success / failure from events or polling. Exact UX **PLANNED**. |
-| **Backend** | Enrollment service starts a session, records outcome. |
-| **Database** | Planned `enrollments` entity. |
-| **Matrix** | `/device.cgi/enrolluser?action=enroll`. The API guide states this **only starts enrollment**; retrieving the credential later uses get/set credential. |
+| **What** | Assign an existing user credential to a device as durable desired state (`pending` until Sync applies it). |
+| **Why** | Separates “should be on this door” from Matrix HTTP and from live capture. |
+| **UI** | Enrollments page: create (user + credential + device), list/filter, cancel, retry failed, revoke active. |
+| **Backend** | Enrollment service; no Matrix calls. See ADR-010. |
+| **Database** | `enrollments` table (**IMPLEMENTED**). |
+| **Matrix** | Not called from this slice. Future Sync provisions via adapter; live capture (`enrolluser`) is a separate future session concept. |
 
-Enrollment options and reader group selection are **model-specific** (**REQUIRES MATRIX DOCUMENTATION VERIFICATION**).
+Physical capture sessions (`/device.cgi/enrolluser`) remain **PLANNED** and are not enrollment assignment rows.
 
 ### 5. Basic Access Configuration
 

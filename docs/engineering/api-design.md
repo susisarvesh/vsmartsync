@@ -16,7 +16,7 @@ Rules:
 - Every new command documents: auth requirement, validation, what is stored, audit need.
 - Breaking command payloads requires searching all `src/services` callers and tests.
 
-Existing commands (foundation + users + devices + credentials): `get_app_info`, `get_database_status`, `connect_database`, `create_user`, `list_users`, `update_user` (name only), `deactivate_user`, `create_device`, `list_devices`, `update_device` (metadata only), `set_device_password`, `test_device_connection`, `create_credential`, `list_credentials`, `get_credential`, `update_credential` (optional value replace), `set_credential_status`. Device and credential responses never include plaintext secrets or ciphertext.
+Existing commands (foundation + users + devices + credentials + enrollments): prior commands plus `create_enrollment`, `list_enrollments`, `get_enrollment`, `cancel_enrollment`, `revoke_enrollment`, `retry_enrollment`. Enrollment responses never include secrets or Matrix payloads.
 
 ## 2. Device API — Matrix COSEC CGI
 
@@ -31,7 +31,7 @@ http://<deviceIP:deviceport>/device.cgi/<request-type>?<argument>=<value>
 - Default device port in that guide is **80**. Auth is HTTP basic auth **to the device**.
 - Do not invent request-types. If the guide or model docs do not establish behavior, mark **REQUIRES MATRIX DOCUMENTATION VERIFICATION**.
 - Domain code depends on an adapter trait (`upsert_user`, `start_enroll`, …), not on query strings.
-- Timeouts, mapping of vendor error text/XML, and retries (only when idempotent) live in the adapter/client.
+- Timeouts, mapping of vendor `Response-Code` / error text, and retries (only when idempotent, and **not** inside the HTTP client) live in the adapter/client boundary. Client success = HTTP success **and** `Response-Code=0` ([ADR-011](../architecture/decisions/ADR-011-matrix-client-foundation.md)).
 
 Details: [matrix-integration.md](../matrix-integration.md).
 

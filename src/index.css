@@ -3,19 +3,19 @@
 @theme {
   --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto,
     Helvetica, Arial, sans-serif;
-  --color-background: #f4f5f7;
-  --color-foreground: #111827;
+  --color-background: #eef1f6;
+  --color-foreground: #0f172a;
   --color-card: #ffffff;
-  --color-card-foreground: #111827;
-  --color-muted: #f3f4f6;
-  --color-muted-foreground: #6b7280;
-  --color-border: #e5e7eb;
-  --color-input: #e5e7eb;
+  --color-card-foreground: #0f172a;
+  --color-muted: #f1f5f9;
+  --color-muted-foreground: #64748b;
+  --color-border: #e2e8f0;
+  --color-input: #e2e8f0;
   --color-ring: #2563eb;
   --color-primary: #1d4ed8;
   --color-primary-foreground: #ffffff;
-  --color-secondary: #f3f4f6;
-  --color-secondary-foreground: #111827;
+  --color-secondary: #f8fafc;
+  --color-secondary-foreground: #0f172a;
   --color-accent: #eff6ff;
   --color-accent-foreground: #1e3a8a;
   --color-destructive: #b91c1c;

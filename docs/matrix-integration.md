@@ -1,6 +1,8 @@
 # Matrix integration
 
-**Status:** Adapter/client exist. **IMPLEMENTED:** thin connectivity probe `GET /device.cgi/device-basic-config?action=get`. Broader CGI is not implemented. This document uses only behavior verified in **COSEC Devices API User Guide, Version 28 (30 October 2025)**.
+**Status:** Adapter/client exist. **IMPLEMENTED:** Matrix HTTP Client foundation (`Response-Code` evaluation, timeouts, basic auth, no redirects); connectivity probe `GET /device.cgi/device-basic-config?action=get`; Adapter `set_user` and `set_pin` via `GET /device.cgi/users?action=set`. **`set_card` deferred** (no verified Card set example). Sync / `device_users` not implemented. Facts from **COSEC Devices API User Guide, Version 28 (30 October 2025)**.
+
+See [ADR-011](architecture/decisions/ADR-011-matrix-client-foundation.md), [ADR-012](architecture/decisions/ADR-012-matrix-adapter-set-user-pin.md).
 
 ## Adapter vs API
 
@@ -48,7 +50,7 @@ Special characters `& ' " < > # % ;` are not allowed inside argument values ( `&
 
 ## Supported device families (guide list)
 
-The guide lists APIs as depending on device type, including:
+The product architecture targets **all device families covered by the API guide**, not a single hard-coded MVP model. The guide lists APIs as depending on device type, including:
 
 - COSEC Direct Door V2 / V3 / V4
 - COSEC Path Controller
@@ -63,6 +65,15 @@ The guide lists APIs as depending on device type, including:
 
 Support of a given path or parameter **Requires verification against the specific Matrix device model/API documentation.**
 
+### Documented support ≠ hardware-verified support
+
+| Concept | Meaning |
+|---|---|
+| **Documented support** | The guide describes the API for that family / marks applicability. |
+| **Hardware-verified support** | We have exercised that path on a physical unit (or equivalent lab fixture) and recorded the result. |
+
+Do not claim every listed family is lab-validated. Until a model is tested, treat feature behavior as **REQUIRES MATRIX DOCUMENTATION VERIFICATION** / hardware verification. Model capability, per-device configuration, and application intent must stay separate (see ADR-011).
+
 ## Currently relevant API areas (MVP-oriented)
 
 Verified paths and actions:
@@ -70,7 +81,7 @@ Verified paths and actions:
 | Area | Path | Notes from the guide |
 |---|---|---|
 | Device | `/device.cgi/device-basic-config` | Actions include `get`, `set`, `getdefault`, `setdefault`. Name, application type, ASC, max fingers, etc. |
-| Users | `/device.cgi/users` | `get` / `set` configuration; `delete` removes the user **and credentials** on the device. Creating a user requires `user-id` and `ref-user-id`. |
+| Users | `/device.cgi/users` | `get` / `set` configuration; `delete` removes the user **and credentials** on the device. Creating a user requires `user-id` and `ref-user-id`. **IMPLEMENTED (Adapter):** `set_user`, `set_pin` (`user-pin`). **NOT implemented:** Card via this path. |
 | Credentials | `/device.cgi/credential` | `set` / `get` / `delete`. Types include finger, card, palm, face (face types ARGO FACE). Data may travel in the request/response body. |
 | Enrollment | `/device.cgi/enrolluser` | `action=enroll`. Starts capture on the device; **does not** replace get/set credential. |
 | Access settings | `/device.cgi/access-setting` | `get` / `set` / defaults. Weekdays and work start/end times in the documented parameter table. |
@@ -140,7 +151,20 @@ Batch sizes, TCP `keep-live-events`, `trigger` start/stop, and `response-time` d
 
 ## Error handling
 
-The guide documents HTTP status classes and a table of **API response codes** (body `Response-Code=0` appears in success examples). Mapping those codes into application errors is **PLANNED**. Treat unknown codes as **Requires verification against the specific Matrix device model/API documentation.**
+The guide documents HTTP status classes and a table of **API response codes**.
+
+**Client foundation (implemented):**
+
+```text
+HTTP 2xx + Response-Code=0  →  Matrix operation succeeded
+HTTP 2xx + Response-Code≠0  →  MatrixClientError::ApiError { code }
+HTTP 2xx + missing/bad code →  MatrixClientError::BadResponse
+HTTP 401/403                →  MatrixClientError::AuthFailed
+```
+
+HTTP success alone is **not** Matrix success. Domain/Sync mapping of specific codes (21, 24, 37, …) is **PLANNED** in the adapter. Treat unknown codes as **Requires verification against the specific Matrix device model/API documentation.**
+
+The client does **not** retry. Retries belong to Sync when an operation is known to be safe.
 
 ## Authentication reminder
 

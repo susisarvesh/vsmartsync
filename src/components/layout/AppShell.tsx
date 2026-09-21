@@ -27,18 +27,20 @@ export function AppShell({
 }: AppShellProps) {
   return (
     <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-      <AppTopBar
-        database={database}
-        databaseLoading={databaseLoading}
-        databaseError={databaseError}
-        retrying={retrying}
-        onRetryDatabase={onRetryDatabase}
-      />
       <div className="flex min-h-0 flex-1">
         <AppSidebar route={route} onNavigate={onNavigate} />
-        <main className="min-w-0 flex-1 overflow-auto p-4 md:p-5">
-          {children}
-        </main>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <AppTopBar
+            database={database}
+            databaseLoading={databaseLoading}
+            databaseError={databaseError}
+            retrying={retrying}
+            onRetryDatabase={onRetryDatabase}
+          />
+          <main className="min-w-0 flex-1 overflow-auto">
+            <div className="mx-auto w-full max-w-6xl p-5 md:p-6">{children}</div>
+          </main>
+        </div>
       </div>
     </div>
   );

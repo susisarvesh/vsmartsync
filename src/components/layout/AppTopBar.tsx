@@ -17,15 +17,10 @@ export function AppTopBar({
   onRetryDatabase,
 }: AppTopBarProps) {
   return (
-    <header className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-card px-4">
-      <div className="min-w-0">
-        <h1 className="truncate text-sm font-semibold text-foreground">
-          Vsmart Sync
-        </h1>
-        <p className="truncate text-xs text-muted-foreground">
-          Local access-control workstation
-        </p>
-      </div>
+    <header className="flex h-11 shrink-0 items-center justify-between gap-3 border-b border-border bg-card px-4">
+      <p className="truncate text-xs text-muted-foreground">
+        Workstation · local PostgreSQL · Matrix COSEC
+      </p>
       <DatabaseStatusControl
         database={database}
         loading={databaseLoading}

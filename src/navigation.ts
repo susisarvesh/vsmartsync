@@ -1,4 +1,9 @@
-export type AppRoute = "dashboard" | "users" | "devices" | "credentials";
+export type AppRoute =
+  | "dashboard"
+  | "users"
+  | "devices"
+  | "credentials"
+  | "enrollments";
 
 export const NAV_ITEMS: Array<{
   id: AppRoute;
@@ -24,5 +29,10 @@ export const NAV_ITEMS: Array<{
     id: "credentials",
     label: "Credentials",
     description: "Manage user Card and PIN credentials",
+  },
+  {
+    id: "enrollments",
+    label: "Enrollments",
+    description: "Assign credentials to devices",
   },
 ];

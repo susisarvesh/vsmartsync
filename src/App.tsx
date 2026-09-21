@@ -7,6 +7,7 @@ import type { AppRoute } from "@/navigation";
 import { CredentialsPage } from "@/pages/CredentialsPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { DevicesPage } from "@/pages/DevicesPage";
+import { EnrollmentsPage } from "@/pages/EnrollmentsPage";
 import { UsersPage } from "@/pages/UsersPage";
 import "@/index.css";
 
@@ -59,7 +60,7 @@ function AppContent() {
           databaseError={database.error}
           retrying={database.retrying}
           onRetryDatabase={database.retry}
-          onOpenUsers={() => setRoute("users")}
+          onNavigate={setRoute}
         />
       ) : null}
       {route === "users" ? <UsersPage enabled={databaseConnected} /> : null}
@@ -68,6 +69,9 @@ function AppContent() {
       ) : null}
       {route === "credentials" ? (
         <CredentialsPage enabled={databaseConnected} />
+      ) : null}
+      {route === "enrollments" ? (
+        <EnrollmentsPage enabled={databaseConnected} />
       ) : null}
     </AppShell>
   );

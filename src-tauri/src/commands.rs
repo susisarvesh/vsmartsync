@@ -4,10 +4,13 @@
 //! connection secrets, device passwords, or ciphertext to the UI.
 
 use crate::common::{app_info, AppInfo, DevicePasswordVault, SecretVault};
-use crate::database::repositories::{CredentialRepository, DeviceRepository, UserRepository};
+use crate::database::repositories::{
+    CredentialRepository, DeviceRepository, EnrollmentRepository, UserRepository,
+};
 use crate::database::{DatabaseRuntime, DatabaseStatus};
 use crate::domains::credentials::{self, Credential, CredentialError, CredentialListFilter};
 use crate::domains::devices::{self, Device, DeviceError};
+use crate::domains::enrollments::{self, Enrollment, EnrollmentError, EnrollmentListFilter};
 use crate::domains::users::{self, User, UserError};
 use crate::matrix::MatrixAdapter;
 use uuid::Uuid;
@@ -264,6 +267,114 @@ pub async fn set_credential_status(
         .map_err(credential_error_to_command)
 }
 
+#[tauri::command]
+pub async fn create_enrollment(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    user_id: Uuid,
+    credential_id: Uuid,
+    device_id: Uuid,
+) -> Result<Enrollment, String> {
+    tracing::info!(
+        command = "create_enrollment",
+        user_id = %user_id,
+        credential_id = %credential_id,
+        device_id = %device_id,
+        "frontend invoked rust"
+    );
+    let enrollments = enrollments_repo(&runtime)?;
+    let users = users_repo(&runtime)?;
+    let credentials = credentials_repo(&runtime)?;
+    let devices = devices_repo(&runtime)?;
+    enrollments::create_enrollment(
+        &enrollments,
+        &users,
+        &credentials,
+        &devices,
+        user_id,
+        credential_id,
+        device_id,
+    )
+    .await
+    .map_err(enrollment_error_to_command)
+}
+
+#[tauri::command]
+pub async fn list_enrollments(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    user_id: Option<Uuid>,
+    device_id: Option<Uuid>,
+    credential_id: Option<Uuid>,
+    status: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<Vec<Enrollment>, String> {
+    tracing::info!(command = "list_enrollments", "frontend invoked rust");
+    let enrollments = enrollments_repo(&runtime)?;
+    let filter = EnrollmentListFilter {
+        user_id,
+        device_id,
+        credential_id,
+        status: status
+            .as_deref()
+            .map(enrollments::EnrollmentStatus::parse)
+            .transpose()
+            .map_err(enrollment_error_to_command)?,
+        limit,
+        offset,
+    };
+    enrollments::list_enrollments(&enrollments, filter)
+        .await
+        .map_err(enrollment_error_to_command)
+}
+
+#[tauri::command]
+pub async fn get_enrollment(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    id: Uuid,
+) -> Result<Enrollment, String> {
+    tracing::info!(command = "get_enrollment", enrollment_id = %id, "frontend invoked rust");
+    let enrollments = enrollments_repo(&runtime)?;
+    enrollments::get_enrollment(&enrollments, id)
+        .await
+        .map_err(enrollment_error_to_command)
+}
+
+#[tauri::command]
+pub async fn cancel_enrollment(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    id: Uuid,
+) -> Result<Enrollment, String> {
+    tracing::info!(command = "cancel_enrollment", enrollment_id = %id, "frontend invoked rust");
+    let enrollments = enrollments_repo(&runtime)?;
+    enrollments::cancel_enrollment(&enrollments, id)
+        .await
+        .map_err(enrollment_error_to_command)
+}
+
+#[tauri::command]
+pub async fn revoke_enrollment(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    id: Uuid,
+) -> Result<Enrollment, String> {
+    tracing::info!(command = "revoke_enrollment", enrollment_id = %id, "frontend invoked rust");
+    let enrollments = enrollments_repo(&runtime)?;
+    enrollments::revoke_enrollment(&enrollments, id)
+        .await
+        .map_err(enrollment_error_to_command)
+}
+
+#[tauri::command]
+pub async fn retry_enrollment(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    id: Uuid,
+) -> Result<Enrollment, String> {
+    tracing::info!(command = "retry_enrollment", enrollment_id = %id, "frontend invoked rust");
+    let enrollments = enrollments_repo(&runtime)?;
+    enrollments::retry_enrollment(&enrollments, id)
+        .await
+        .map_err(enrollment_error_to_command)
+}
+
 fn users_repo(runtime: &DatabaseRuntime) -> Result<UserRepository, String> {
     let pool = runtime
         .pool()
@@ -285,6 +396,13 @@ fn credentials_repo(runtime: &DatabaseRuntime) -> Result<CredentialRepository, S
     Ok(CredentialRepository::new(pool))
 }
 
+fn enrollments_repo(runtime: &DatabaseRuntime) -> Result<EnrollmentRepository, String> {
+    let pool = runtime
+        .pool()
+        .ok_or_else(|| enrollment_error_to_command(EnrollmentError::Unavailable))?;
+    Ok(EnrollmentRepository::new(pool))
+}
+
 fn user_error_to_command(error: UserError) -> String {
     error.to_string()
 }
@@ -294,6 +412,10 @@ fn device_error_to_command(error: DeviceError) -> String {
 }
 
 fn credential_error_to_command(error: CredentialError) -> String {
+    error.to_string()
+}
+
+fn enrollment_error_to_command(error: EnrollmentError) -> String {
     error.to_string()
 }
 
@@ -308,11 +430,15 @@ fn credential_secret_error(_: crate::common::SecretError) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        credential_error_to_command, device_error_to_command, get_app_info, user_error_to_command,
+        credential_error_to_command, device_error_to_command, enrollment_error_to_command,
+        get_app_info, user_error_to_command,
     };
     use crate::common::AppInfo;
-    use crate::domains::credentials::{Credential, CredentialError, CredentialStatus, CredentialType};
+    use crate::domains::credentials::{
+        Credential, CredentialError, CredentialStatus, CredentialType,
+    };
     use crate::domains::devices::{ConnectionStatus, Device, DeviceError};
+    use crate::domains::enrollments::EnrollmentError;
     use crate::domains::users::UserError;
     use chrono::Utc;
     use tauri::ipc::{CallbackFn, InvokeBody};
@@ -373,6 +499,26 @@ mod tests {
         assert_eq!(message, "CREDENTIAL_SECRET_UNAVAILABLE");
         assert!(!message.to_lowercase().contains("pin"));
         assert!(!message.contains("ciphertext"));
+    }
+
+    #[test]
+    fn enrollment_errors_are_stable_codes() {
+        assert_eq!(
+            enrollment_error_to_command(EnrollmentError::Duplicate),
+            "ENROLLMENT_DUPLICATE"
+        );
+        assert_eq!(
+            enrollment_error_to_command(EnrollmentError::InvalidTransition),
+            "ENROLLMENT_INVALID_TRANSITION"
+        );
+        assert_eq!(
+            enrollment_error_to_command(EnrollmentError::CredentialOwnership),
+            "ENROLLMENT_CREDENTIAL_OWNERSHIP"
+        );
+        assert_eq!(
+            enrollment_error_to_command(EnrollmentError::DeviceNotFound),
+            "DEVICE_NOT_FOUND"
+        );
     }
 
     #[test]

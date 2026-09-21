@@ -142,9 +142,9 @@ fn is_ipv4(value: &str) -> bool {
     if parts.len() != 4 {
         return false;
     }
-    parts.iter().all(|part| {
-        part.parse::<u8>().is_ok() && !(part.len() > 1 && part.starts_with('0'))
-    })
+    parts
+        .iter()
+        .all(|part| part.parse::<u8>().is_ok() && !(part.len() > 1 && part.starts_with('0')))
 }
 
 fn is_hostname(value: &str) -> bool {

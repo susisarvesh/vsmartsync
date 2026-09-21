@@ -9,9 +9,9 @@ type PageHeaderProps = {
 
 export function PageHeader({ title, description, action }: PageHeaderProps) {
   return (
-    <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+    <div className="mb-5 flex flex-wrap items-start justify-between gap-3 border-b border-border pb-4">
       <div className="min-w-0 max-w-3xl">
-        <h2 className="text-xl font-semibold tracking-tight text-foreground">
+        <h2 className="text-lg font-semibold tracking-tight text-foreground">
           {title}
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">{description}</p>
@@ -35,7 +35,7 @@ export function EmptyState({
   onAction,
 }: EmptyStateProps) {
   return (
-    <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed border-border bg-card px-4 py-8">
+    <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed border-border bg-card px-5 py-10">
       <div>
         <h3 className="text-sm font-semibold text-foreground">{title}</h3>
         <p className="mt-1 max-w-lg text-sm text-muted-foreground">

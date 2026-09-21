@@ -27,9 +27,7 @@ pub async fn create_device(
     let port = normalize_port(port.unwrap_or(DEFAULT_DEVICE_PORT))?;
     let username = normalize_username(username)?;
     let password = normalize_password(password)?;
-    let ciphertext = vault
-        .encrypt(&password)
-        .map_err(map_secret_error)?;
+    let ciphertext = vault.encrypt(&password).map_err(map_secret_error)?;
 
     let record = DeviceRecord {
         id: Uuid::new_v4(),
@@ -90,9 +88,7 @@ pub async fn set_device_password(
 ) -> Result<Device, DeviceError> {
     let _ = load_record(repo, id).await?;
     let password = normalize_password(password)?;
-    let ciphertext = vault
-        .encrypt(&password)
-        .map_err(map_secret_error)?;
+    let ciphertext = vault.encrypt(&password).map_err(map_secret_error)?;
     let updated_at = Utc::now();
 
     let saved = repo
@@ -126,12 +122,7 @@ pub async fn test_device_connection(
     let now = Utc::now();
     let outcome = apply_probe_result(probe, record.last_seen_at, now);
     let saved = repo
-        .update_connection(
-            id,
-            outcome.status.as_str(),
-            outcome.last_seen_at,
-            now,
-        )
+        .update_connection(id, outcome.status.as_str(), outcome.last_seen_at, now)
         .await
         .map_err(map_db_error)?
         .ok_or(DeviceError::NotFound)?;
@@ -165,13 +156,11 @@ fn apply_probe_result(
             last_seen_at: previous_last_seen,
             error: Some(DeviceError::AuthFailed),
         },
-        Err(MatrixProbeError::BadResponse) | Err(MatrixProbeError::InvalidTarget) => {
-            ProbeOutcome {
-                status: ConnectionStatus::Offline,
-                last_seen_at: previous_last_seen,
-                error: Some(DeviceError::BadResponse),
-            }
-        }
+        Err(MatrixProbeError::BadResponse) | Err(MatrixProbeError::InvalidTarget) => ProbeOutcome {
+            status: ConnectionStatus::Offline,
+            last_seen_at: previous_last_seen,
+            error: Some(DeviceError::BadResponse),
+        },
         Err(MatrixProbeError::Timeout) | Err(MatrixProbeError::Unreachable) => ProbeOutcome {
             status: ConnectionStatus::Offline,
             last_seen_at: previous_last_seen,
