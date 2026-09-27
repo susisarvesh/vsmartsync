@@ -248,6 +248,35 @@ impl DeviceUserRepository {
         .await
         .map_err(DatabaseError::Query)
     }
+
+    pub async fn list_for_user(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<DeviceUserRecord>, DatabaseError> {
+        sqlx::query_as::<_, DeviceUserRecord>(
+            r#"
+            SELECT
+                id, user_id, device_id, matrix_user_id, matrix_ref_user_id,
+                provisioned_at, created_at, updated_at
+            FROM device_users
+            WHERE user_id = $1
+            ORDER BY created_at ASC
+            "#,
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(DatabaseError::Query)
+    }
+
+    pub async fn delete_for_user(&self, user_id: Uuid) -> Result<(), DatabaseError> {
+        sqlx::query("DELETE FROM device_users WHERE user_id = $1")
+            .bind(user_id)
+            .execute(&self.pool)
+            .await
+            .map_err(DatabaseError::Query)?;
+        Ok(())
+    }
 }
 
 /// `VS` + zero-padded decimal sequence, max 15 characters total.

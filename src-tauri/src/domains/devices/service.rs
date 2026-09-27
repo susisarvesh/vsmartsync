@@ -8,34 +8,40 @@ use crate::database::DatabaseError;
 use crate::matrix::{MatrixAdapter, MatrixProbeError};
 
 use super::{
-    normalize_host, normalize_name, normalize_password, normalize_port, normalize_username,
-    ConnectionStatus, Device, DeviceError, DEFAULT_DEVICE_PORT,
+    activate, deactivate, normalize_host, normalize_mac_address, normalize_name,
+    normalize_password, normalize_port, normalize_username, ConnectionStatus, Device, DeviceError,
+    DeviceStatus, DEFAULT_DEVICE_PORT,
 };
 
 pub async fn create_device(
     repo: &DeviceRepository,
     vault: &DevicePasswordVault,
-    name: &str,
+    device_name: &str,
     host: &str,
     port: Option<i32>,
+    mac_address: Option<&str>,
     username: &str,
     password: &str,
 ) -> Result<Device, DeviceError> {
     let now = Utc::now();
-    let name = normalize_name(name)?;
+    let device_name = normalize_name(device_name)?;
     let host = normalize_host(host)?;
     let port = normalize_port(port.unwrap_or(DEFAULT_DEVICE_PORT))?;
+    let mac_address = normalize_mac_address(mac_address)?;
     let username = normalize_username(username)?;
     let password = normalize_password(password)?;
     let ciphertext = vault.encrypt(&password).map_err(map_secret_error)?;
 
     let record = DeviceRecord {
         id: Uuid::new_v4(),
-        name,
+        device_name,
         host,
         port,
+        mac_address,
+        device_model: None,
         username,
         password_ciphertext: ciphertext,
+        status: DeviceStatus::Active.as_str().to_string(),
         connection_status: ConnectionStatus::Unknown.as_str().to_string(),
         last_seen_at: None,
         created_at: now,
@@ -59,15 +65,17 @@ pub async fn list_devices(repo: &DeviceRepository) -> Result<Vec<Device>, Device
 pub async fn update_device(
     repo: &DeviceRepository,
     id: Uuid,
-    name: &str,
+    device_name: &str,
     host: &str,
     port: i32,
+    mac_address: Option<&str>,
     username: &str,
 ) -> Result<Device, DeviceError> {
     let mut record = load_record(repo, id).await?;
-    record.name = normalize_name(name)?;
+    record.device_name = normalize_name(device_name)?;
     record.host = normalize_host(host)?;
     record.port = normalize_port(port)?;
+    record.mac_address = normalize_mac_address(mac_address)?;
     record.username = normalize_username(username)?;
     record.updated_at = Utc::now();
 
@@ -98,6 +106,18 @@ pub async fn set_device_password(
         .ok_or(DeviceError::NotFound)?;
     tracing::info!(device_id = %id, command = "set_device_password", "updated device password");
     from_record(saved)
+}
+
+pub async fn activate_device(repo: &DeviceRepository, id: Uuid) -> Result<Device, DeviceError> {
+    let record = load_record(repo, id).await?;
+    let device = activate(from_record(record)?, Utc::now());
+    save_status(repo, &device).await
+}
+
+pub async fn deactivate_device(repo: &DeviceRepository, id: Uuid) -> Result<Device, DeviceError> {
+    let record = load_record(repo, id).await?;
+    let device = deactivate(from_record(record)?, Utc::now());
+    save_status(repo, &device).await
 }
 
 pub async fn test_device_connection(
@@ -176,13 +196,26 @@ async fn load_record(repo: &DeviceRepository, id: Uuid) -> Result<DeviceRecord, 
         .ok_or(DeviceError::NotFound)
 }
 
+async fn save_status(repo: &DeviceRepository, device: &Device) -> Result<Device, DeviceError> {
+    let saved = repo
+        .update_status(device.id, device.status.as_str(), device.updated_at)
+        .await
+        .map_err(map_db_error)?
+        .ok_or(DeviceError::NotFound)?;
+    tracing::info!(device_id = %device.id, status = device.status.as_str(), "updated device status");
+    from_record(saved)
+}
+
 fn from_record(record: DeviceRecord) -> Result<Device, DeviceError> {
     Ok(Device {
         id: record.id,
-        name: record.name,
+        device_name: record.device_name,
         host: record.host,
         port: record.port,
+        mac_address: record.mac_address,
+        device_model: record.device_model,
         username: record.username,
+        status: DeviceStatus::parse(&record.status)?,
         connection_status: ConnectionStatus::parse(&record.connection_status)?,
         last_seen_at: record.last_seen_at,
         created_at: record.created_at,
@@ -199,11 +232,10 @@ fn map_db_error(error: DatabaseError) -> DeviceError {
 }
 
 fn map_secret_error(error: SecretError) -> DeviceError {
+    tracing::error!(error = %error, "device secret vault failed");
     match error {
-        SecretError::Unavailable | SecretError::Corrupt => {
-            tracing::error!(error = %error, "device secret vault failed");
-            DeviceError::SecretUnavailable
-        }
+        SecretError::Unavailable => DeviceError::SecretUnavailable,
+        SecretError::Corrupt => DeviceError::SecretCorrupt,
     }
 }
 
@@ -246,11 +278,14 @@ mod tests {
     fn public_device_view_omits_ciphertext() {
         let record = DeviceRecord {
             id: Uuid::new_v4(),
-            name: "Door".into(),
+            device_name: "Door".into(),
             host: "192.168.1.10".into(),
             port: 80,
+            mac_address: None,
+            device_model: None,
             username: "admin".into(),
             password_ciphertext: b"ciphertext-blob".to_vec(),
+            status: "active".into(),
             connection_status: "unknown".into(),
             last_seen_at: None,
             created_at: Utc::now(),

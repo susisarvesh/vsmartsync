@@ -5,10 +5,10 @@ use crate::database::models::UserRecord;
 use crate::database::repositories::UserRepository;
 use crate::database::DatabaseError;
 
-use super::{deactivate, new_user, rename_user, User, UserError, UserStatus};
+use super::{activate, deactivate, new_user, update_username, User, UserError, UserStatus};
 
-pub async fn create_user(repo: &UserRepository, name: &str) -> Result<User, UserError> {
-    let user = new_user(name, Uuid::new_v4(), Utc::now())?;
+pub async fn create_user(repo: &UserRepository, username: &str) -> Result<User, UserError> {
+    let user = new_user(username, Uuid::new_v4(), Utc::now())?;
     repo.insert(&to_record(&user)).await.map_err(map_db_error)?;
     tracing::info!(user_id = %user.id, command = "create_user", "created user");
     Ok(user)
@@ -23,13 +23,19 @@ pub async fn list_users(repo: &UserRepository) -> Result<Vec<User>, UserError> {
         .collect()
 }
 
-pub async fn update_user_name(
+pub async fn update_user(
     repo: &UserRepository,
     id: Uuid,
-    name: &str,
+    username: &str,
 ) -> Result<User, UserError> {
     let user = load_user(repo, id).await?;
-    let user = rename_user(user, name, Utc::now())?;
+    let user = update_username(user, username, Utc::now())?;
+    save_user(repo, &user).await
+}
+
+pub async fn activate_user(repo: &UserRepository, id: Uuid) -> Result<User, UserError> {
+    let user = load_user(repo, id).await?;
+    let user = activate(user, Utc::now());
     save_user(repo, &user).await
 }
 
@@ -61,7 +67,7 @@ async fn save_user(repo: &UserRepository, user: &User) -> Result<User, UserError
 fn to_record(user: &User) -> UserRecord {
     UserRecord {
         id: user.id,
-        name: user.name.clone(),
+        username: user.username.clone(),
         status: user.status.as_str().to_string(),
         created_at: user.created_at,
         updated_at: user.updated_at,
@@ -71,7 +77,7 @@ fn to_record(user: &User) -> UserRecord {
 fn from_record(record: UserRecord) -> Result<User, UserError> {
     Ok(User {
         id: record.id,
-        name: record.name,
+        username: record.username,
         status: UserStatus::parse(&record.status)?,
         created_at: record.created_at,
         updated_at: record.updated_at,

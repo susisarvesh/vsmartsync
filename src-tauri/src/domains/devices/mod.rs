@@ -1,7 +1,8 @@
 //! Devices domain.
 //!
-//! Owns registered COSEC connection records and application reachability.
-//! Does not own enrollment, sync, credentials, or Matrix CGI beyond a thin ping.
+//! Owns registered COSEC device records, software status, and reachability.
+//! Does not own enrollment, sync, credentials, capability discovery, or Matrix CGI
+//! beyond the connection probe.
 
 mod service;
 
@@ -11,7 +12,8 @@ use thiserror::Error;
 use uuid::Uuid;
 
 pub use service::{
-    create_device, list_devices, set_device_password, test_device_connection, update_device,
+    activate_device, create_device, deactivate_device, list_devices, set_device_password,
+    test_device_connection, update_device,
 };
 
 pub const MAX_DEVICE_NAME_LENGTH: usize = 200;
@@ -19,6 +21,30 @@ pub const MAX_HOST_LENGTH: usize = 255;
 pub const MAX_USERNAME_LENGTH: usize = 100;
 pub const MAX_PASSWORD_LENGTH: usize = 200;
 pub const DEFAULT_DEVICE_PORT: i32 = 80;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DeviceStatus {
+    Active,
+    Inactive,
+}
+
+impl DeviceStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Inactive => "inactive",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, DeviceError> {
+        match value {
+            "active" => Ok(Self::Active),
+            "inactive" => Ok(Self::Inactive),
+            _ => Err(DeviceError::Unavailable),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,10 +78,14 @@ impl ConnectionStatus {
 #[serde(rename_all = "camelCase")]
 pub struct Device {
     pub id: Uuid,
-    pub name: String,
+    pub device_name: String,
     pub host: String,
     pub port: i32,
+    pub mac_address: Option<String>,
+    /// Filled later by configuration discovery. Empty until then.
+    pub device_model: Option<String>,
     pub username: String,
+    pub status: DeviceStatus,
     pub connection_status: ConnectionStatus,
     pub last_seen_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
@@ -70,6 +100,8 @@ pub enum DeviceError {
     InvalidHost,
     #[error("DEVICE_INVALID_PORT")]
     InvalidPort,
+    #[error("DEVICE_INVALID_MAC")]
+    InvalidMac,
     #[error("DEVICE_INVALID_USERNAME")]
     InvalidUsername,
     #[error("DEVICE_INVALID_PASSWORD")]
@@ -86,6 +118,9 @@ pub enum DeviceError {
     BadResponse,
     #[error("DEVICE_SECRET_UNAVAILABLE")]
     SecretUnavailable,
+    /// Ciphertext does not decrypt with the current master key.
+    #[error("DEVICE_SECRET_CORRUPT")]
+    SecretCorrupt,
     #[error("DATABASE_UNAVAILABLE")]
     Unavailable,
 }
@@ -117,6 +152,43 @@ pub fn normalize_port(port: i32) -> Result<i32, DeviceError> {
         return Err(DeviceError::InvalidPort);
     }
     Ok(port)
+}
+
+pub fn normalize_mac_address(mac_address: Option<&str>) -> Result<Option<String>, DeviceError> {
+    let Some(raw) = mac_address.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let compact: String = raw
+        .chars()
+        .filter(|ch| *ch != ':' && *ch != '-' && !ch.is_whitespace())
+        .collect();
+    if compact.len() != 12 || !compact.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err(DeviceError::InvalidMac);
+    }
+    let upper = compact.to_ascii_uppercase();
+    let canonical = upper
+        .as_bytes()
+        .chunks(2)
+        .map(|pair| std::str::from_utf8(pair).unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join(":");
+    Ok(Some(canonical))
+}
+
+pub fn activate(mut device: Device, now: DateTime<Utc>) -> Device {
+    if device.status != DeviceStatus::Active {
+        device.status = DeviceStatus::Active;
+        device.updated_at = now;
+    }
+    device
+}
+
+pub fn deactivate(mut device: Device, now: DateTime<Utc>) -> Device {
+    if device.status != DeviceStatus::Inactive {
+        device.status = DeviceStatus::Inactive;
+        device.updated_at = now;
+    }
+    device
 }
 
 pub fn normalize_username(username: &str) -> Result<String, DeviceError> {
@@ -166,8 +238,9 @@ fn is_hostname(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_host, normalize_name, normalize_password, normalize_port, normalize_username,
-        ConnectionStatus, DeviceError,
+        activate, deactivate, normalize_host, normalize_mac_address, normalize_name,
+        normalize_password, normalize_port, normalize_username, ConnectionStatus, Device,
+        DeviceError, DeviceStatus,
     };
 
     #[test]
@@ -199,6 +272,49 @@ mod tests {
             normalize_password("").unwrap_err(),
             DeviceError::InvalidPassword
         );
+    }
+
+    #[test]
+    fn normalizes_mac_and_rejects_garbage() {
+        assert_eq!(normalize_mac_address(None).unwrap(), None);
+        assert_eq!(normalize_mac_address(Some("  ")).unwrap(), None);
+        assert_eq!(
+            normalize_mac_address(Some("aa-bb-cc-dd-ee-ff")).unwrap(),
+            Some("AA:BB:CC:DD:EE:FF".to_string())
+        );
+        assert_eq!(
+            normalize_mac_address(Some("aabbccddeeff")).unwrap(),
+            Some("AA:BB:CC:DD:EE:FF".to_string())
+        );
+        assert_eq!(
+            normalize_mac_address(Some("not-a-mac")).unwrap_err(),
+            DeviceError::InvalidMac
+        );
+    }
+
+    #[test]
+    fn activate_and_deactivate_are_idempotent() {
+        let now = chrono::Utc::now();
+        let device = Device {
+            id: uuid::Uuid::nil(),
+            device_name: "Door".into(),
+            host: "10.0.0.1".into(),
+            port: 80,
+            mac_address: None,
+            device_model: None,
+            username: "admin".into(),
+            status: DeviceStatus::Active,
+            connection_status: ConnectionStatus::Unknown,
+            last_seen_at: None,
+            created_at: now,
+            updated_at: now,
+        };
+        assert_eq!(activate(device.clone(), now), device);
+        let inactive = deactivate(device, now);
+        assert_eq!(inactive.status, DeviceStatus::Inactive);
+        assert_eq!(deactivate(inactive.clone(), now), inactive);
+        let active = activate(inactive, now);
+        assert_eq!(active.status, DeviceStatus::Active);
     }
 
     #[test]

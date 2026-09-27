@@ -11,5 +11,6 @@ pub mod devices;
 pub mod enrollments;
 mod events;
 mod licensing;
-mod synchronization;
+pub mod synchronization;
+pub mod user_devices;
 pub mod users;

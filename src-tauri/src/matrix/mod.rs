@@ -4,16 +4,14 @@
 //! Do not call Matrix HTTP APIs from repositories or React.
 //!
 //! **Implemented:** Client foundation (`Response-Code`), connectivity probe,
-//! Adapter `set_user` and `set_pin` via `/device.cgi/users`.
+//! Adapter `set_user`, `set_pin`, enrollment capability reads, and `enroll_user`.
 //!
-//! **Not in this slice:** `set_card`, `/credential`, Sync, `device_users`,
-//! capability framework, retries, React/domain SoR changes.
+//! **Not in this slice:** `set_card`, credential template download, retries.
 
 pub mod adapter;
 pub mod client;
+mod enrollment;
 pub mod models;
 
-pub use adapter::{MatrixAdapter, MatrixProbeError};
-
-// Application-facing set_user / set_pin types: `matrix::adapter::{SetUserParams,
-// SetPinParams, MatrixAdapterError}` — re-export when a domain/Sync caller lands.
+pub use adapter::{MatrixAdapter, MatrixAdapterError, MatrixProbeError, SetUserParams};
+pub use enrollment::{credential_present, HardwareEnrollType};

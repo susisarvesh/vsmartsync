@@ -36,12 +36,14 @@ import {
   asErrorMessage,
   useCancelEnrollment,
   useCreateEnrollment,
+  useDeviceEnrollmentOptions,
   useEnrollmentsQuery,
+  useEnrollOnDevice,
   useRetryEnrollment,
   useRevokeEnrollment,
 } from "@/hooks/useEnrollments";
 import { useCredentialsQuery } from "@/hooks/useCredentials";
-import { useUsersQuery } from "@/hooks/useUsers";
+import { useUsersForDeviceQuery, useUsersQuery } from "@/hooks/useUsers";
 import { formatDateTime } from "@/lib/utils";
 import type { Enrollment, EnrollmentStatus } from "@/types/enrollments";
 
@@ -55,6 +57,7 @@ type CreateForm = z.infer<typeof createSchema>;
 
 type EnrollmentsPageProps = {
   enabled: boolean;
+  embedded?: boolean;
 };
 
 function statusLabel(status: EnrollmentStatus): string {
@@ -78,13 +81,34 @@ function EnrollmentStatusBadge({ status }: { status: EnrollmentStatus }) {
 }
 
 function credentialLabel(type: string, masked: string | null): string {
-  if (type === "pin") {
-    return "PIN · Configured";
+  switch (type) {
+    case "pin":
+      return "PIN · Configured";
+    case "card":
+      return `Card · ${masked ?? "Configured"}`;
+    case "read_only_card":
+      return "Read-only card · On device";
+    case "smart_card":
+      return "Smart card · On device";
+    case "finger":
+    case "biometric":
+      return "Fingerprint · On device";
+    case "face":
+      return "Face · On device";
+    case "duress_finger":
+      return "Duress finger · On device";
+    case "biometric_card":
+    case "biometric_then_card":
+      return "Fingerprint then card · On device";
+    default:
+      return type;
   }
-  return `Card · ${masked ?? "Configured"}`;
 }
 
-export function EnrollmentsPage({ enabled }: EnrollmentsPageProps) {
+export function EnrollmentsPage({
+  enabled,
+  embedded = false,
+}: EnrollmentsPageProps) {
   const { toast } = useToast();
   const usersQuery = useUsersQuery(enabled);
   const devicesQuery = useDevicesQuery(enabled);
@@ -95,6 +119,10 @@ export function EnrollmentsPage({ enabled }: EnrollmentsPageProps) {
     "all",
   );
   const [createOpen, setCreateOpen] = useState(false);
+  const [hardwareOpen, setHardwareOpen] = useState(false);
+  const [hardwareDeviceId, setHardwareDeviceId] = useState("");
+  const [hardwareUserId, setHardwareUserId] = useState("");
+  const [hardwareType, setHardwareType] = useState("");
   const [cancelTarget, setCancelTarget] = useState<Enrollment | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<Enrollment | null>(null);
 
@@ -110,6 +138,13 @@ export function EnrollmentsPage({ enabled }: EnrollmentsPageProps) {
 
   const enrollmentsQuery = useEnrollmentsQuery(enabled, listFilter);
   const createEnrollment = useCreateEnrollment();
+  const enrollOnDevice = useEnrollOnDevice();
+  const hardwareOptions = useDeviceEnrollmentOptions(
+    hardwareOpen && hardwareDeviceId ? hardwareDeviceId : null,
+  );
+  const assignedUsers = useUsersForDeviceQuery(
+    hardwareOpen && hardwareDeviceId ? hardwareDeviceId : null,
+  );
   const cancelEnrollment = useCancelEnrollment();
   const revokeEnrollment = useRevokeEnrollment();
   const retryEnrollment = useRetryEnrollment();
@@ -149,6 +184,34 @@ export function EnrollmentsPage({ enabled }: EnrollmentsPageProps) {
     } catch (reason: unknown) {
       toast({
         title: "Could not create enrollment",
+        description: asErrorMessage(reason),
+        variant: "destructive",
+      });
+    }
+  }
+
+  async function onHardwareEnroll() {
+    if (!hardwareDeviceId || !hardwareUserId || !hardwareType) {
+      return;
+    }
+    try {
+      await enrollOnDevice.mutateAsync({
+        deviceId: hardwareDeviceId,
+        userId: hardwareUserId,
+        enrollType: hardwareType,
+      });
+      toast({
+        title: "Enrollment started on the device",
+        description: "The person should present that credential at the reader. The link is saved here.",
+        variant: "success",
+      });
+      setHardwareOpen(false);
+      setHardwareDeviceId("");
+      setHardwareUserId("");
+      setHardwareType("");
+    } catch (reason: unknown) {
+      toast({
+        title: "Could not enroll on the device",
         description: asErrorMessage(reason),
         variant: "destructive",
       });
@@ -203,6 +266,9 @@ export function EnrollmentsPage({ enabled }: EnrollmentsPageProps) {
   }
 
   if (!enabled) {
+    if (embedded) {
+      return null;
+    }
     return (
       <div>
         <PageHeader
@@ -217,18 +283,38 @@ export function EnrollmentsPage({ enabled }: EnrollmentsPageProps) {
     );
   }
 
+  const actions = (
+    <div className="flex flex-wrap gap-2">
+      <Button type="button" variant="outline" onClick={() => setHardwareOpen(true)}>
+        Enroll on device
+      </Button>
+      <Button type="button" onClick={() => setCreateOpen(true)}>
+        <Plus className="h-4 w-4" aria-hidden />
+        Add Enrollment
+      </Button>
+    </div>
+  );
+
   return (
-    <div>
-      <PageHeader
-        title="Enrollments"
-        description="Desired assignments of credentials to devices. Synchronization to Matrix is a later slice."
-        action={
-          <Button type="button" onClick={() => setCreateOpen(true)}>
-            <Plus className="h-4 w-4" aria-hidden />
-            Add Enrollment
-          </Button>
-        }
-      />
+    <div className={embedded ? "mt-8 border-t border-border pt-6" : undefined}>
+      {embedded ? (
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-foreground">Enrollment</h2>
+            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+              Enrollment starts capture for a credential. The credential stays
+              on that user and on the device.
+            </p>
+          </div>
+          {actions}
+        </div>
+      ) : (
+        <PageHeader
+          title="Enrollments"
+          description="Check what the device can enroll, start capture on the hardware, and keep the result for that user."
+          action={actions}
+        />
+      )}
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="relative min-w-[12rem] flex-1">
@@ -252,7 +338,7 @@ export function EnrollmentsPage({ enabled }: EnrollmentsPageProps) {
             <SelectItem value="all">All users</SelectItem>
             {(usersQuery.data ?? []).map((user) => (
               <SelectItem key={user.id} value={user.id}>
-                {user.name}
+                {user.username}
               </SelectItem>
             ))}
           </SelectContent>
@@ -265,7 +351,7 @@ export function EnrollmentsPage({ enabled }: EnrollmentsPageProps) {
             <SelectItem value="all">All devices</SelectItem>
             {(devicesQuery.data ?? []).map((device) => (
               <SelectItem key={device.id} value={device.id}>
-                {device.name}
+                {device.deviceName}
               </SelectItem>
             ))}
           </SelectContent>
@@ -326,7 +412,7 @@ export function EnrollmentsPage({ enabled }: EnrollmentsPageProps) {
       ) : null}
 
       {filtered.length > 0 ? (
-        <div className="overflow-hidden rounded-lg border border-border bg-card">
+        <div className="overflow-x-auto rounded-lg border border-border bg-card">
           <table className="w-full border-collapse text-sm">
             <thead className="bg-muted/60 text-left text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
@@ -410,6 +496,134 @@ export function EnrollmentsPage({ enabled }: EnrollmentsPageProps) {
         </div>
       ) : null}
 
+      <Dialog
+        open={hardwareOpen}
+        onOpenChange={(open) => {
+          setHardwareOpen(open);
+          if (!open) {
+            setHardwareDeviceId("");
+            setHardwareUserId("");
+            setHardwareType("");
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Enroll on device</DialogTitle>
+            <DialogDescription>
+              The app checks the device, then asks the reader to capture one card or one face. When the reader prompts, hold the card or face there and leave that screen up until it finishes. The enrollment is saved here only after the device reports that credential on the user.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3">
+            <div className="grid gap-1.5">
+              <Label>Device</Label>
+              <Select
+                value={hardwareDeviceId || undefined}
+                onValueChange={(value) => {
+                  setHardwareDeviceId(value);
+                  setHardwareUserId("");
+                  setHardwareType("");
+                }}
+              >
+                <SelectTrigger aria-label="Enrollment device">
+                  <SelectValue placeholder="Select device" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(devicesQuery.data ?? [])
+                    .filter((device) => device.status === "active")
+                    .map((device) => (
+                      <SelectItem key={device.id} value={device.id}>
+                        {device.deviceName}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-1.5">
+              <Label>Enrollment type</Label>
+              <Select
+                value={hardwareType || undefined}
+                onValueChange={setHardwareType}
+                disabled={!hardwareDeviceId || hardwareOptions.isLoading}
+              >
+                <SelectTrigger aria-label="Enrollment type">
+                  <SelectValue
+                    placeholder={
+                      hardwareOptions.isLoading
+                        ? "Checking the device…"
+                        : "Select type"
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {(hardwareOptions.data?.options ?? []).map((option) => (
+                    <SelectItem key={option.enrollType} value={option.enrollType}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {hardwareOptions.isError ? (
+                <p className="text-xs text-destructive">
+                  {asErrorMessage(hardwareOptions.error)}
+                </p>
+              ) : null}
+              {hardwareDeviceId &&
+              hardwareOptions.isSuccess &&
+              (hardwareOptions.data?.options.length ?? 0) === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  This device did not report a supported enrollment type.
+                </p>
+              ) : null}
+            </div>
+            <div className="grid gap-1.5">
+              <Label>User</Label>
+              <Select
+                value={hardwareUserId || undefined}
+                onValueChange={setHardwareUserId}
+                disabled={!hardwareDeviceId}
+              >
+                <SelectTrigger aria-label="Assigned user">
+                  <SelectValue placeholder="Select assigned user" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(assignedUsers.data ?? [])
+                    .filter((user) => user.status === "active")
+                    .map((user) => (
+                      <SelectItem key={user.userId} value={user.userId}>
+                        {user.username}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setHardwareOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={
+                !hardwareDeviceId ||
+                !hardwareUserId ||
+                !hardwareType ||
+                enrollOnDevice.isPending
+              }
+              onClick={() => void onHardwareEnroll()}
+            >
+              {enrollOnDevice.isPending
+                ? "Present it on the reader…"
+                : "Start enrollment"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent>
           <DialogHeader>
@@ -440,7 +654,7 @@ export function EnrollmentsPage({ enabled }: EnrollmentsPageProps) {
                     .filter((user) => user.status === "active")
                     .map((user) => (
                       <SelectItem key={user.id} value={user.id}>
-                        {user.name}
+                        {user.username}
                       </SelectItem>
                     ))}
                 </SelectContent>
@@ -496,7 +710,7 @@ export function EnrollmentsPage({ enabled }: EnrollmentsPageProps) {
                 <SelectContent>
                   {(devicesQuery.data ?? []).map((device) => (
                     <SelectItem key={device.id} value={device.id}>
-                      {device.name} ({device.host}:{device.port})
+                      {device.deviceName} ({device.host}:{device.port})
                     </SelectItem>
                   ))}
                 </SelectContent>

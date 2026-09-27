@@ -2,7 +2,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   cancelEnrollment,
   createEnrollment,
+  deviceEnrollmentOptions,
   enrollmentErrorMessage,
+  enrollOnDevice,
   listEnrollments,
   retryEnrollment,
   revokeEnrollment,
@@ -79,6 +81,29 @@ export function useRetryEnrollment() {
       );
       void queryClient.invalidateQueries({ queryKey: ["enrollments"] });
     },
+  });
+}
+
+export function useEnrollOnDevice() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      deviceId: string;
+      userId: string;
+      enrollType: string;
+    }) => enrollOnDevice(input.deviceId, input.userId, input.enrollType),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["enrollments"] });
+      void queryClient.invalidateQueries({ queryKey: ["credentials"] });
+    },
+  });
+}
+
+export function useDeviceEnrollmentOptions(deviceId: string | null) {
+  return useQuery({
+    queryKey: ["device-enrollment-options", deviceId],
+    queryFn: () => deviceEnrollmentOptions(deviceId ?? ""),
+    enabled: Boolean(deviceId),
   });
 }
 

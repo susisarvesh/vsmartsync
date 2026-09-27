@@ -5,12 +5,17 @@
 
 use crate::common::{app_info, AppInfo, DevicePasswordVault, SecretVault};
 use crate::database::repositories::{
-    CredentialRepository, DeviceRepository, EnrollmentRepository, UserRepository,
+    CredentialRepository, DeviceRepository, DeviceUserRepository, EnrollmentRepository,
+    UserDeviceRepository, UserRepository,
 };
 use crate::database::{DatabaseRuntime, DatabaseStatus};
 use crate::domains::credentials::{self, Credential, CredentialError, CredentialListFilter};
 use crate::domains::devices::{self, Device, DeviceError};
-use crate::domains::enrollments::{self, Enrollment, EnrollmentError, EnrollmentListFilter};
+use crate::domains::enrollments::{
+    self, DeviceEnrollmentOptions, Enrollment, EnrollmentError, EnrollmentListFilter,
+};
+use crate::domains::synchronization::{self, SyncError, SyncUsersResult};
+use crate::domains::user_devices::{self, UserDeviceAssignment, UserDeviceError, UserOnDevice};
 use crate::domains::users::{self, User, UserError};
 use crate::matrix::MatrixAdapter;
 use uuid::Uuid;
@@ -42,11 +47,11 @@ pub async fn connect_database(
 #[tauri::command]
 pub async fn create_user(
     runtime: tauri::State<'_, DatabaseRuntime>,
-    name: String,
+    username: String,
 ) -> Result<User, String> {
     tracing::info!(command = "create_user", "frontend invoked rust");
     let repo = users_repo(&runtime)?;
-    users::create_user(&repo, &name)
+    users::create_user(&repo, &username)
         .await
         .map_err(user_error_to_command)
 }
@@ -64,13 +69,54 @@ pub async fn list_users(runtime: tauri::State<'_, DatabaseRuntime>) -> Result<Ve
 pub async fn update_user(
     runtime: tauri::State<'_, DatabaseRuntime>,
     id: Uuid,
-    name: String,
+    username: String,
 ) -> Result<User, String> {
     tracing::info!(command = "update_user", user_id = %id, "frontend invoked rust");
     let repo = users_repo(&runtime)?;
-    users::update_user_name(&repo, id, &name)
+    users::update_user(&repo, id, &username)
         .await
         .map_err(user_error_to_command)
+}
+
+#[tauri::command]
+pub async fn activate_user(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    id: Uuid,
+) -> Result<User, String> {
+    tracing::info!(command = "activate_user", user_id = %id, "frontend invoked rust");
+    let repo = users_repo(&runtime)?;
+    users::activate_user(&repo, id)
+        .await
+        .map_err(user_error_to_command)
+}
+
+#[tauri::command]
+pub async fn delete_user(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    id: Uuid,
+) -> Result<(), String> {
+    tracing::info!(command = "delete_user", user_id = %id, "frontend invoked rust");
+    let users = users_repo(&runtime)?;
+    let devices = devices_repo(&runtime)?;
+    let device_users = device_users_repo(&runtime)?;
+    let assignments = user_devices_repo(&runtime)?;
+    let credentials = credentials_repo(&runtime)?;
+    let enrollments = enrollments_repo(&runtime)?;
+    let vault = DevicePasswordVault::open().map_err(secret_error_to_command)?;
+    let matrix = MatrixAdapter::new().map_err(|_| "MATRIX_UNREACHABLE".to_string())?;
+    users::delete_user(
+        &users,
+        &devices,
+        &device_users,
+        &assignments,
+        &credentials,
+        &enrollments,
+        &vault,
+        &matrix,
+        id,
+    )
+    .await
+    .map_err(user_error_to_command)
 }
 
 #[tauri::command]
@@ -86,20 +132,130 @@ pub async fn deactivate_user(
 }
 
 #[tauri::command]
+pub async fn list_user_devices(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    user_id: Uuid,
+) -> Result<Vec<UserDeviceAssignment>, String> {
+    tracing::info!(command = "list_user_devices", user_id = %user_id, "frontend invoked rust");
+    let users = users_repo(&runtime)?;
+    let assignments = user_devices_repo(&runtime)?;
+    user_devices::list_user_devices(&users, &assignments, user_id)
+        .await
+        .map_err(user_device_error_to_command)
+}
+
+#[tauri::command]
+pub async fn list_users_for_device(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    device_id: Uuid,
+) -> Result<Vec<UserOnDevice>, String> {
+    tracing::info!(
+        command = "list_users_for_device",
+        device_id = %device_id,
+        "frontend invoked rust"
+    );
+    let devices = devices_repo(&runtime)?;
+    let assignments = user_devices_repo(&runtime)?;
+    user_devices::list_users_for_device(&devices, &assignments, device_id)
+        .await
+        .map_err(user_device_error_to_command)
+}
+
+#[tauri::command]
+pub async fn assign_user_device(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    user_id: Uuid,
+    device_id: Uuid,
+) -> Result<UserDeviceAssignment, String> {
+    tracing::info!(
+        command = "assign_user_device",
+        user_id = %user_id,
+        device_id = %device_id,
+        "frontend invoked rust"
+    );
+    let users = users_repo(&runtime)?;
+    let devices = devices_repo(&runtime)?;
+    let assignments = user_devices_repo(&runtime)?;
+    user_devices::assign_user_device(&users, &devices, &assignments, user_id, device_id)
+        .await
+        .map_err(user_device_error_to_command)
+}
+
+#[tauri::command]
+pub async fn remove_user_device(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    user_id: Uuid,
+    device_id: Uuid,
+) -> Result<(), String> {
+    tracing::info!(
+        command = "remove_user_device",
+        user_id = %user_id,
+        device_id = %device_id,
+        "frontend invoked rust"
+    );
+    let assignments = user_devices_repo(&runtime)?;
+    user_devices::remove_user_device(&assignments, user_id, device_id)
+        .await
+        .map_err(user_device_error_to_command)
+}
+
+#[tauri::command]
+pub async fn sync_assigned_users(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    device_id: Uuid,
+    user_ids: Vec<Uuid>,
+) -> Result<SyncUsersResult, String> {
+    tracing::info!(
+        command = "sync_assigned_users",
+        device_id = %device_id,
+        users = user_ids.len(),
+        "frontend invoked rust"
+    );
+    let users = users_repo(&runtime)?;
+    let devices = devices_repo(&runtime)?;
+    let assignments = user_devices_repo(&runtime)?;
+    let mappings = device_users_repo(&runtime)?;
+    let vault = DevicePasswordVault::open().map_err(secret_error_to_command)?;
+    let matrix = MatrixAdapter::new().map_err(|_| "MATRIX_UNREACHABLE".to_string())?;
+    synchronization::sync_assigned_users(
+        &users,
+        &devices,
+        &assignments,
+        &mappings,
+        &vault,
+        &matrix,
+        device_id,
+        &user_ids,
+    )
+    .await
+    .map_err(sync_error_to_command)
+}
+
+#[tauri::command]
 pub async fn create_device(
     runtime: tauri::State<'_, DatabaseRuntime>,
-    name: String,
+    device_name: String,
     host: String,
     port: Option<i32>,
+    mac_address: Option<String>,
     username: String,
     password: String,
 ) -> Result<Device, String> {
     tracing::info!(command = "create_device", "frontend invoked rust");
     let repo = devices_repo(&runtime)?;
     let vault = DevicePasswordVault::open().map_err(secret_error_to_command)?;
-    devices::create_device(&repo, &vault, &name, &host, port, &username, &password)
-        .await
-        .map_err(device_error_to_command)
+    devices::create_device(
+        &repo,
+        &vault,
+        &device_name,
+        &host,
+        port,
+        mac_address.as_deref(),
+        &username,
+        &password,
+    )
+    .await
+    .map_err(device_error_to_command)
 }
 
 #[tauri::command]
@@ -117,14 +273,47 @@ pub async fn list_devices(
 pub async fn update_device(
     runtime: tauri::State<'_, DatabaseRuntime>,
     id: Uuid,
-    name: String,
+    device_name: String,
     host: String,
     port: i32,
+    mac_address: Option<String>,
     username: String,
 ) -> Result<Device, String> {
     tracing::info!(command = "update_device", device_id = %id, "frontend invoked rust");
     let repo = devices_repo(&runtime)?;
-    devices::update_device(&repo, id, &name, &host, port, &username)
+    devices::update_device(
+        &repo,
+        id,
+        &device_name,
+        &host,
+        port,
+        mac_address.as_deref(),
+        &username,
+    )
+    .await
+    .map_err(device_error_to_command)
+}
+
+#[tauri::command]
+pub async fn activate_device(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    id: Uuid,
+) -> Result<Device, String> {
+    tracing::info!(command = "activate_device", device_id = %id, "frontend invoked rust");
+    let repo = devices_repo(&runtime)?;
+    devices::activate_device(&repo, id)
+        .await
+        .map_err(device_error_to_command)
+}
+
+#[tauri::command]
+pub async fn deactivate_device(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    id: Uuid,
+) -> Result<Device, String> {
+    tracing::info!(command = "deactivate_device", device_id = %id, "frontend invoked rust");
+    let repo = devices_repo(&runtime)?;
+    devices::deactivate_device(&repo, id)
         .await
         .map_err(device_error_to_command)
 }
@@ -375,6 +564,77 @@ pub async fn retry_enrollment(
         .map_err(enrollment_error_to_command)
 }
 
+#[tauri::command]
+pub async fn device_enrollment_options(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    device_id: Uuid,
+) -> Result<DeviceEnrollmentOptions, String> {
+    tracing::info!(
+        command = "device_enrollment_options",
+        device_id = %device_id,
+        "frontend invoked rust"
+    );
+    let devices = devices_repo(&runtime)?;
+    let vault = DevicePasswordVault::open().map_err(secret_error_to_command)?;
+    let matrix = MatrixAdapter::new().map_err(|_| "DEVICE_OFFLINE".to_string())?;
+    enrollments::device_enrollment_options(&devices, &vault, &matrix, device_id)
+        .await
+        .map_err(enrollment_error_to_command)
+}
+
+#[tauri::command]
+pub async fn enroll_on_device(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    device_id: Uuid,
+    user_id: Uuid,
+    enroll_type: String,
+) -> Result<Enrollment, String> {
+    tracing::info!(
+        command = "enroll_on_device",
+        device_id = %device_id,
+        user_id = %user_id,
+        enroll_type = %enroll_type,
+        "frontend invoked rust"
+    );
+    let enrollments = enrollments_repo(&runtime)?;
+    let users = users_repo(&runtime)?;
+    let credentials = credentials_repo(&runtime)?;
+    let devices = devices_repo(&runtime)?;
+    let assignments = user_devices_repo(&runtime)?;
+    let device_users = device_users_repo(&runtime)?;
+    let vault = DevicePasswordVault::open().map_err(secret_error_to_command)?;
+    let matrix = MatrixAdapter::new().map_err(|_| "DEVICE_OFFLINE".to_string())?;
+    enrollments::enroll_on_device(
+        &enrollments,
+        &users,
+        &credentials,
+        &devices,
+        &assignments,
+        &device_users,
+        &vault,
+        &matrix,
+        device_id,
+        user_id,
+        &enroll_type,
+    )
+    .await
+    .map_err(enrollment_error_to_command)
+}
+
+fn device_users_repo(runtime: &DatabaseRuntime) -> Result<DeviceUserRepository, String> {
+    let pool = runtime
+        .pool()
+        .ok_or_else(|| sync_error_to_command(SyncError::Unavailable))?;
+    Ok(DeviceUserRepository::new(pool))
+}
+
+fn user_devices_repo(runtime: &DatabaseRuntime) -> Result<UserDeviceRepository, String> {
+    let pool = runtime
+        .pool()
+        .ok_or_else(|| user_device_error_to_command(UserDeviceError::Unavailable))?;
+    Ok(UserDeviceRepository::new(pool))
+}
+
 fn users_repo(runtime: &DatabaseRuntime) -> Result<UserRepository, String> {
     let pool = runtime
         .pool()
@@ -401,6 +661,14 @@ fn enrollments_repo(runtime: &DatabaseRuntime) -> Result<EnrollmentRepository, S
         .pool()
         .ok_or_else(|| enrollment_error_to_command(EnrollmentError::Unavailable))?;
     Ok(EnrollmentRepository::new(pool))
+}
+
+fn sync_error_to_command(error: SyncError) -> String {
+    error.to_string()
+}
+
+fn user_device_error_to_command(error: UserDeviceError) -> String {
+    error.to_string()
 }
 
 fn user_error_to_command(error: UserError) -> String {
@@ -431,14 +699,16 @@ fn credential_secret_error(_: crate::common::SecretError) -> String {
 mod tests {
     use super::{
         credential_error_to_command, device_error_to_command, enrollment_error_to_command,
-        get_app_info, user_error_to_command,
+        get_app_info, sync_error_to_command, user_device_error_to_command, user_error_to_command,
     };
     use crate::common::AppInfo;
     use crate::domains::credentials::{
         Credential, CredentialError, CredentialStatus, CredentialType,
     };
-    use crate::domains::devices::{ConnectionStatus, Device, DeviceError};
+    use crate::domains::devices::{ConnectionStatus, Device, DeviceError, DeviceStatus};
     use crate::domains::enrollments::EnrollmentError;
+    use crate::domains::synchronization::SyncError;
+    use crate::domains::user_devices::UserDeviceError;
     use crate::domains::users::UserError;
     use chrono::Utc;
     use tauri::ipc::{CallbackFn, InvokeBody};
@@ -450,8 +720,8 @@ mod tests {
     #[test]
     fn user_errors_are_stable_codes_not_sql() {
         assert_eq!(
-            user_error_to_command(UserError::InvalidName),
-            "USER_INVALID_NAME"
+            user_error_to_command(UserError::InvalidUsername),
+            "USER_INVALID_USERNAME"
         );
         assert_eq!(user_error_to_command(UserError::NotFound), "USER_NOT_FOUND");
         assert_eq!(
@@ -459,6 +729,51 @@ mod tests {
             "DATABASE_UNAVAILABLE"
         );
         assert!(!user_error_to_command(UserError::Unavailable).contains("postgres://"));
+    }
+
+    #[test]
+    fn user_device_errors_are_stable_codes() {
+        assert_eq!(
+            user_device_error_to_command(UserDeviceError::UserNotFound),
+            "USER_NOT_FOUND"
+        );
+        assert_eq!(
+            user_device_error_to_command(UserDeviceError::DeviceNotFound),
+            "DEVICE_NOT_FOUND"
+        );
+        assert_eq!(
+            user_device_error_to_command(UserDeviceError::Duplicate),
+            "USER_DEVICE_DUPLICATE"
+        );
+        assert_eq!(
+            user_device_error_to_command(UserDeviceError::NotFound),
+            "USER_DEVICE_NOT_FOUND"
+        );
+        assert_eq!(
+            user_device_error_to_command(UserDeviceError::Unavailable),
+            "DATABASE_UNAVAILABLE"
+        );
+    }
+
+    #[test]
+    fn sync_errors_are_stable_codes_without_secrets() {
+        assert_eq!(
+            sync_error_to_command(SyncError::DeviceInactive),
+            "DEVICE_INACTIVE"
+        );
+        assert_eq!(sync_error_to_command(SyncError::NoUsers), "SYNC_NO_USERS");
+        assert_eq!(
+            sync_error_to_command(SyncError::SecretUnavailable),
+            "DEVICE_SECRET_UNAVAILABLE"
+        );
+        assert_eq!(
+            sync_error_to_command(SyncError::SecretCorrupt),
+            "DEVICE_SECRET_CORRUPT"
+        );
+        let message = sync_error_to_command(SyncError::Unavailable);
+        assert_eq!(message, "DATABASE_UNAVAILABLE");
+        assert!(!message.contains("postgres://"));
+        assert!(!message.to_lowercase().contains("password"));
     }
 
     #[test]
@@ -479,6 +794,10 @@ mod tests {
         assert_eq!(message, "DEVICE_SECRET_UNAVAILABLE");
         assert!(!message.to_lowercase().contains("password"));
         assert!(!message.contains("ciphertext"));
+        assert_eq!(
+            device_error_to_command(DeviceError::SecretCorrupt),
+            "DEVICE_SECRET_CORRUPT"
+        );
     }
 
     #[test]
@@ -546,10 +865,13 @@ mod tests {
     fn device_serde_never_includes_password_fields() {
         let device = Device {
             id: Uuid::new_v4(),
-            name: "Lobby".into(),
+            device_name: "Lobby".into(),
             host: "10.0.0.5".into(),
             port: 80,
+            mac_address: None,
+            device_model: None,
             username: "admin".into(),
+            status: DeviceStatus::Active,
             connection_status: ConnectionStatus::Unknown,
             last_seen_at: None,
             created_at: Utc::now(),

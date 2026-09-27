@@ -38,7 +38,7 @@ export function AppShell({
             onRetryDatabase={onRetryDatabase}
           />
           <main className="min-w-0 flex-1 overflow-auto">
-            <div className="mx-auto w-full max-w-6xl p-5 md:p-6">{children}</div>
+            <div className="mx-auto w-full max-w-6xl p-4 md:p-5">{children}</div>
           </main>
         </div>
       </div>

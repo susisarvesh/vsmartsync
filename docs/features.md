@@ -22,12 +22,12 @@ Matrix behavior: architecture targets all guide-listed families; individual feat
 
 | | |
 |---|---|
-| **What** | Create, update, deactivate, and delete people who may receive access on doors. |
+| **What** | Create, view, update username, activate, deactivate, and assign one person to many devices. |
 | **Why** | PostgreSQL is the desired-state source. Devices receive a projection of that state. |
-| **UI** | Administrator maintains a user list and user detail form. |
-| **Backend** | User service validates input, assigns internal UUIDs, writes via the user repository. |
-| **Database** | Persist application users (planned `users` entity). |
-| **Matrix** | Push/update/delete via `/device.cgi/users` **when syncing a device** — not from the React form directly. |
+| **UI** | Users page: list, view, create, edit username, activate, deactivate, delete, assign to many devices. Delete removes the person locally and from every Matrix device that already has them. Assign to device (sidebar, under Users): select one device, then select users to assign to it. |
+| **Backend** | User service validates input, assigns internal UUIDs, writes via the user repository. Status changes only through activate and deactivate. Assignment is a separate `user_devices` service: it checks that the user and device exist, then stores the pair. Adding the person on the hardware is the synchronization step, which then writes `device_users`. |
+| **Database** | `users` (`id`, `username`, `status`, `created_at`, `updated_at`). Assignment is `user_devices` (`user_id`, `device_id`), unique per pair. |
+| **Matrix** | Not called from this module. Push/update/delete via `/device.cgi/users` happens **when syncing a device**. |
 
 Device-side users use alphanumeric `user-id` (max 15) and numeric `ref-user-id` (max 8 digits). Mapping is **`device_users`** (**IMPLEMENTED**, ADR-013): device-local `VS######` / `10000001…`. Schema for Sync jobs remains **PLANNED**.
 
@@ -35,12 +35,12 @@ Device-side users use alphanumeric `user-id` (max 15) and numeric `ref-user-id` 
 
 | | |
 |---|---|
-| **What** | Register a COSEC device (address, port, name, credentials stored only in Rust), test reachability, show basic identity. |
+| **What** | Register a COSEC device, store network details and optional MAC, keep software status, test reachability, show last seen. Model stays empty until discovery. |
 | **Why** | All later sync, enrollment, and events need a known device record. |
-| **UI** | Add/edit device, connection test, status. |
+| **UI** | Add/edit/view device, activate/deactivate, connection test. Password is write-only. |
 | **Backend** | Device service stores connection data; never returns device passwords to the UI. |
-| **Database** | Persist planned `devices` entity. |
-| **Matrix** | Reachability probe via `/device.cgi/device-basic-config` (**IMPLEMENTED** client foundation + `Response-Code=0` check). |
+| **Database** | `devices` (`device_name`, host, port, `mac_address`, `device_model`, `status`, `connection_status`, `last_seen_at`). |
+| **Matrix** | Reachability probe via `/device.cgi/device-basic-config` (**IMPLEMENTED**). `reader-config` and `enroll-options` are the later discovery step and are not called yet. |
 
 ### 3. Basic Credential Management
 
@@ -48,8 +48,8 @@ Device-side users use alphanumeric `user-id` (max 15) and numeric `ref-user-id` 
 |---|---|
 | **What** | Associate credential *records* with a user (card identifiers, PINs). Store values encrypted at rest. Biometric/face templates are **out of scope** for this slice. |
 | **Why** | Enrollment/sync later provision credentials onto doors from this system of record. |
-| **UI** | Credentials page: list/filter, create Card/PIN, replace value, activate/deactivate. Write-only secrets. |
-| **Backend** | Credential service; AES-256-GCM via shared OS-keychain vault. |
+| **UI** | Credentials page: list/filter, create Card/PIN, replace value, activate/deactivate. Enrollment is a section on this page, not a separate screen. Write-only secrets. |
+| **Backend** | Credential service; AES-256-GCM via the shared application master key. |
 | **Database** | `credentials` table (**IMPLEMENTED**). |
 | **Matrix** | Not called from this slice. Future: `/device.cgi/credential` via Enrollment/Sync. |
 
@@ -59,14 +59,14 @@ Distinguish **credential provisioning** (HTTP set/get of templates or card numbe
 
 | | |
 |---|---|
-| **What** | Assign an existing user credential to a device as durable desired state (`pending` until Sync applies it). |
-| **Why** | Separates “should be on this door” from Matrix HTTP and from live capture. |
-| **UI** | Enrollments page: create (user + credential + device), list/filter, cancel, retry failed, revoke active. |
-| **Backend** | Enrollment service; no Matrix calls. See ADR-010. |
+| **What** | Assign a credential to a device, or enroll on the hardware when the device configuration reports that type. |
+| **Why** | Enrollment has to match the reader that will capture the credential, then stay recorded for that user. |
+| **UI** | Inside Credentials: Enroll on device, plus local assignment (user + credential + device), list/filter, cancel, retry, revoke. |
+| **Backend** | `enroll_on_device` checks device configuration, syncs the user, calls `enrolluser`, and stores an active enrollment on that user. Face enrollment sets `enable-fr=1`. A face-only door is set to Card & Face before a card enrollment so the card prompt can start. Add Enrollment stays local. See ADR-010. |
 | **Database** | `enrollments` table (**IMPLEMENTED**). |
-| **Matrix** | Not called from this slice. Future Sync provisions via adapter; live capture (`enrolluser`) is a separate future session concept. |
+| **Matrix** | Before enrollment, read `device-basic-config`, `reader-config`, and `enroll-options`. Then `users?action=set` and `enrolluser?action=enroll` for a type those documents report. Template bytes are not stored. |
 
-Physical capture sessions (`/device.cgi/enrolluser`) remain **PLANNED** and are not enrollment assignment rows.
+Hardware enrollment is `enroll_on_device`. The older Add Enrollment action remains a local assignment and does not call the device.
 
 ### 5. Basic Access Configuration
 
@@ -85,12 +85,12 @@ Do not assume advanced access routes, visitor flows, or cafeteria features in MV
 
 | | |
 |---|---|
-| **What** | Copy desired PostgreSQL state onto devices via jobs (users, credentials, access settings, deletes). |
+| **What** | Copy desired PostgreSQL state onto devices. This slice adds assigned users on the device. Credentials, deletes, and a durable job queue remain later. |
 | **Why** | There is **no single Matrix “sync” endpoint**. The application owns reconciliation. |
-| **UI** | Per-device sync status, last success, failures, retry. |
-| **Backend** | Planner + worker; statuses pending / processing / success / failed / retry. |
-| **Database** | Planned `sync_jobs`. |
-| **Matrix** | Adapter calls the individual CGI APIs required for that job. |
+| **UI** | Assign to device: Assign and sync, and Sync assigned. The user Devices action also adds that person on the device. |
+| **Backend** | For each assigned user: allocate `device_users`, call `set_user`, then `mark_provisioned`. One failure does not stop the other users. |
+| **Database** | Uses `user_devices` and `device_users`. Planned `sync_jobs` are not created yet. |
+| **Matrix** | `GET /device.cgi/users?action=set` with `user-id`, `ref-user-id`, `user-active`, and `name` when the username fits the guide (15 alphanumeric). |
 
 See [synchronization.md](synchronization.md).
 

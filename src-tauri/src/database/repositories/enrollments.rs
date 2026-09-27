@@ -58,12 +58,12 @@ impl EnrollmentRepository {
             SELECT
                 e.id,
                 e.user_id,
-                u.name AS user_name,
+                u.username AS user_name,
                 e.credential_id,
                 c.type AS credential_type,
                 c.display_hint,
                 e.device_id,
-                d.name AS device_name,
+                d.device_name AS device_name,
                 e.status,
                 e.cancelled_at,
                 e.revoked_at,
@@ -98,12 +98,12 @@ impl EnrollmentRepository {
             SELECT
                 e.id,
                 e.user_id,
-                u.name AS user_name,
+                u.username AS user_name,
                 e.credential_id,
                 c.type AS credential_type,
                 c.display_hint,
                 e.device_id,
-                d.name AS device_name,
+                d.device_name AS device_name,
                 e.status,
                 e.cancelled_at,
                 e.revoked_at,
@@ -165,5 +165,14 @@ impl EnrollmentRepository {
         .map_err(DatabaseError::Query)?;
 
         self.find_by_id(id).await
+    }
+
+    pub async fn delete_for_user(&self, user_id: Uuid) -> Result<(), DatabaseError> {
+        sqlx::query("DELETE FROM enrollments WHERE user_id = $1")
+            .bind(user_id)
+            .execute(&self.pool)
+            .await
+            .map_err(DatabaseError::Query)?;
+        Ok(())
     }
 }

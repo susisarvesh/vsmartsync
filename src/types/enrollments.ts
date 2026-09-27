@@ -28,6 +28,16 @@ export type CreateEnrollmentInput = {
   deviceId: string;
 };
 
+export type EnrollmentOption = {
+  enrollType: string;
+  label: string;
+};
+
+export type DeviceEnrollmentOptions = {
+  deviceId: string;
+  options: EnrollmentOption[];
+};
+
 export type ListEnrollmentsFilter = {
   userId?: string;
   deviceId?: string;

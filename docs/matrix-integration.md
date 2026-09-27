@@ -43,7 +43,8 @@ http://<deviceIP:deviceport>/device.cgi/<request-type>?<argument>=<value>&<argum
 - Common argument: `action` (`get`, `set`, `delete`, `enroll`, `getdefault`, `setdefault`, …).
 - Most commands use the **GET** method with arguments in the URL; **POST** only where the guide says so (body parameters).
 - Response body: **text** (default) or **XML** when `format=xml`.
-- Authentication: device requests **HTTP basic authentication**. The guide’s default username is `admin`; password is **the password set on the device**.
+- Authentication (guide v28): device requests **HTTP basic authentication**. The guide’s default username is `admin`; password is **the password set on the device**. The implemented client follows this (`Authorization: Basic`).
+- Lab observation (ARGO FACE firmware V01R25.02): the device challenged with **HTTP Digest** (`algorithm=MD5`, `qop=auth`), not Basic. That is recorded in [matrix-argo-face-digest-reference.md](matrix-argo-face-digest-reference.md). It is **not** implemented. Do not switch the client until an ADR updates ADR-003 and ADR-011.
 - Client flow: check device availability → send request → device parses action → error (4xx) or success (2xx) with body.
 
 Special characters `& ' " < > # % ;` are not allowed inside argument values ( `&` separates arguments).
@@ -168,4 +169,6 @@ The client does **not** retry. Retries belong to Sync when an operation is known
 
 ## Authentication reminder
 
-Device HTTP basic auth ≠ desktop `auth` module ≠ USB license. Three different secrets, three different modules.
+Device HTTP credentials ≠ desktop `auth` module ≠ USB license. Three different secrets, three different modules.
+
+The shipping client uses HTTP Basic Auth, matching guide v28. A lab ARGO FACE (firmware V01R25.02) answered with Digest instead. Implementation notes, the bounded retry rule, and the conflicts with ADR-011 (no client retries, `Response-Code=0`, 5s timeout) are in [matrix-argo-face-digest-reference.md](matrix-argo-face-digest-reference.md). Treat that file as a reference until an ADR accepts it.

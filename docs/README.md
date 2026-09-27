@@ -109,6 +109,7 @@ See [getting-started.md](getting-started.md) for OS prerequisites.
 | Document | Contents |
 |---|---|
 | [../AGENTS.md](../AGENTS.md) | Cursor/agent constitution (read first) |
+| [matrix-vsmart-current-flow.md](matrix-vsmart-current-flow.md) | Current product flow (Notion snapshot, 2026-09-27). Other docs are not updated to this flow yet. |
 | [getting-started.md](getting-started.md) | Fresh-clone setup, commands, common problems |
 | [engineering/ENGINEERING_GUIDELINES.md](engineering/ENGINEERING_GUIDELINES.md) | How to write code (standards, security, tests, UI) |
 | [architecture/README.md](architecture/README.md) | Architecture, C4, ADRs, module boundaries |
@@ -116,6 +117,7 @@ See [getting-started.md](getting-started.md) for OS prerequisites.
 | [system-flow.md](system-flow.md) | End-to-end flows and Mermaid diagrams |
 | [database.md](database.md) | Planned entities and data rules (no final schema) |
 | [matrix-integration.md](matrix-integration.md) | Matrix adapter vs Matrix API (verified endpoints only) |
+| [matrix-argo-face-digest-reference.md](matrix-argo-face-digest-reference.md) | ARGO FACE Digest auth reference (not implemented; conflicts with current Basic Auth) |
 | [synchronization.md](synchronization.md) | Desired-state sync jobs (application-owned) |
 | [events.md](events.md) | TCP events, HTTP recovery, persistence |
 | [licensing.md](licensing.md) | Planned USB license architecture |

@@ -4,10 +4,10 @@ import { AppShell } from "@/components/layout/AppShell";
 import { ToasterProvider } from "@/components/ui/toaster";
 import { useDatabaseStatus } from "@/hooks/useDatabaseStatus";
 import type { AppRoute } from "@/navigation";
+import { AssignDevicePage } from "@/pages/AssignDevicePage";
 import { CredentialsPage } from "@/pages/CredentialsPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { DevicesPage } from "@/pages/DevicesPage";
-import { EnrollmentsPage } from "@/pages/EnrollmentsPage";
 import { UsersPage } from "@/pages/UsersPage";
 import "@/index.css";
 
@@ -64,14 +64,14 @@ function AppContent() {
         />
       ) : null}
       {route === "users" ? <UsersPage enabled={databaseConnected} /> : null}
+      {route === "assign-device" ? (
+        <AssignDevicePage enabled={databaseConnected} />
+      ) : null}
       {route === "devices" ? (
         <DevicesPage enabled={databaseConnected} />
       ) : null}
       {route === "credentials" ? (
         <CredentialsPage enabled={databaseConnected} />
-      ) : null}
-      {route === "enrollments" ? (
-        <EnrollmentsPage enabled={databaseConnected} />
       ) : null}
     </AppShell>
   );

@@ -53,7 +53,7 @@ impl CredentialRepository {
             SELECT
                 c.id,
                 c.user_id,
-                u.name AS user_name,
+                u.username AS user_name,
                 c.type,
                 c.display_hint,
                 c.status,
@@ -79,7 +79,7 @@ impl CredentialRepository {
             SELECT
                 c.id,
                 c.user_id,
-                u.name AS user_name,
+                u.username AS user_name,
                 c.type,
                 c.display_hint,
                 c.status,
@@ -124,7 +124,7 @@ impl CredentialRepository {
             RETURNING
                 c.id,
                 c.user_id,
-                u.name AS user_name,
+                u.username AS user_name,
                 c.type,
                 c.display_hint,
                 c.status,
@@ -157,7 +157,7 @@ impl CredentialRepository {
             RETURNING
                 c.id,
                 c.user_id,
-                u.name AS user_name,
+                u.username AS user_name,
                 c.type,
                 c.display_hint,
                 c.status,
@@ -171,5 +171,14 @@ impl CredentialRepository {
         .fetch_optional(&self.pool)
         .await
         .map_err(DatabaseError::Query)
+    }
+
+    pub async fn delete_for_user(&self, user_id: Uuid) -> Result<(), DatabaseError> {
+        sqlx::query("DELETE FROM credentials WHERE user_id = $1")
+            .bind(user_id)
+            .execute(&self.pool)
+            .await
+            .map_err(DatabaseError::Query)?;
+        Ok(())
     }
 }

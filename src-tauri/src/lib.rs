@@ -49,10 +49,19 @@ pub fn run() {
             commands::create_user,
             commands::list_users,
             commands::update_user,
+            commands::activate_user,
             commands::deactivate_user,
+            commands::delete_user,
+            commands::list_user_devices,
+            commands::list_users_for_device,
+            commands::assign_user_device,
+            commands::remove_user_device,
+            commands::sync_assigned_users,
             commands::create_device,
             commands::list_devices,
             commands::update_device,
+            commands::activate_device,
+            commands::deactivate_device,
             commands::set_device_password,
             commands::test_device_connection,
             commands::create_credential,
@@ -65,7 +74,9 @@ pub fn run() {
             commands::get_enrollment,
             commands::cancel_enrollment,
             commands::revoke_enrollment,
-            commands::retry_enrollment
+            commands::retry_enrollment,
+            commands::device_enrollment_options,
+            commands::enroll_on_device
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

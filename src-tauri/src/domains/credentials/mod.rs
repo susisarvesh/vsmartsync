@@ -13,7 +13,8 @@ use uuid::Uuid;
 
 pub use service::{
     create_credential, deactivate_credential, get_credential, list_credentials,
-    set_credential_status, update_credential_value, CredentialListFilter,
+    record_hardware_credential, set_credential_status, update_credential_value,
+    CredentialListFilter,
 };
 
 pub const MAX_CARD_LENGTH: usize = 64;
@@ -21,10 +22,23 @@ pub const MIN_PIN_LENGTH: usize = 4;
 pub const MAX_PIN_LENGTH: usize = 12;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub enum CredentialType {
+    #[serde(rename = "card")]
     Card,
+    #[serde(rename = "pin")]
     Pin,
+    #[serde(rename = "read_only_card")]
+    ReadOnlyCard,
+    #[serde(rename = "smart_card")]
+    SmartCard,
+    #[serde(rename = "finger")]
+    Finger,
+    #[serde(rename = "face")]
+    Face,
+    #[serde(rename = "duress_finger")]
+    DuressFinger,
+    #[serde(rename = "biometric_card")]
+    BiometricCard,
 }
 
 impl CredentialType {
@@ -32,6 +46,12 @@ impl CredentialType {
         match self {
             Self::Card => "card",
             Self::Pin => "pin",
+            Self::ReadOnlyCard => "read_only_card",
+            Self::SmartCard => "smart_card",
+            Self::Finger => "finger",
+            Self::Face => "face",
+            Self::DuressFinger => "duress_finger",
+            Self::BiometricCard => "biometric_card",
         }
     }
 
@@ -39,8 +59,19 @@ impl CredentialType {
         match value.trim().to_ascii_lowercase().as_str() {
             "card" => Ok(Self::Card),
             "pin" => Ok(Self::Pin),
+            "read_only_card" => Ok(Self::ReadOnlyCard),
+            "smart_card" => Ok(Self::SmartCard),
+            "finger" => Ok(Self::Finger),
+            "face" => Ok(Self::Face),
+            "duress_finger" => Ok(Self::DuressFinger),
+            "biometric_card" => Ok(Self::BiometricCard),
             _ => Err(CredentialError::InvalidType),
         }
+    }
+
+    /// Card and PIN are typed by an operator. Hardware enrollment types are not.
+    pub fn is_operator_secret(self) -> bool {
+        matches!(self, Self::Card | Self::Pin)
     }
 }
 
@@ -107,9 +138,18 @@ pub fn normalize_credential_value(
     credential_type: CredentialType,
     raw: &str,
 ) -> Result<String, CredentialError> {
+    if !credential_type.is_operator_secret() {
+        return Err(CredentialError::InvalidValue);
+    }
     match credential_type {
         CredentialType::Card => normalize_card(raw),
         CredentialType::Pin => normalize_pin(raw),
+        CredentialType::ReadOnlyCard
+        | CredentialType::SmartCard
+        | CredentialType::Finger
+        | CredentialType::Face
+        | CredentialType::DuressFinger
+        | CredentialType::BiometricCard => Err(CredentialError::InvalidValue),
     }
 }
 
@@ -159,7 +199,13 @@ pub fn display_hint(credential_type: CredentialType, normalized: &str) -> Option
             };
             Some(hint)
         }
-        CredentialType::Pin => None,
+        CredentialType::Pin
+        | CredentialType::ReadOnlyCard
+        | CredentialType::SmartCard
+        | CredentialType::Finger
+        | CredentialType::Face
+        | CredentialType::DuressFinger
+        | CredentialType::BiometricCard => None,
     }
 }
 
@@ -169,7 +215,13 @@ pub fn masked_value_from_hint(
 ) -> Option<String> {
     match credential_type {
         CredentialType::Card => display_hint.map(str::to_string),
-        CredentialType::Pin => None,
+        CredentialType::Pin
+        | CredentialType::ReadOnlyCard
+        | CredentialType::SmartCard
+        | CredentialType::Finger
+        | CredentialType::Face
+        | CredentialType::DuressFinger
+        | CredentialType::BiometricCard => None,
     }
 }
 
@@ -226,6 +278,13 @@ mod tests {
     #[test]
     fn parses_types() {
         assert_eq!(CredentialType::parse("CARD").unwrap(), CredentialType::Card);
-        assert!(CredentialType::parse("finger").is_err());
+        assert_eq!(
+            CredentialType::parse("finger").unwrap(),
+            CredentialType::Finger
+        );
+        assert_eq!(
+            normalize_credential_value(CredentialType::Finger, "template").unwrap_err(),
+            CredentialError::InvalidValue
+        );
     }
 }

@@ -16,9 +16,10 @@ export async function listDevices(): Promise<Device[]> {
 
 export async function createDevice(input: CreateDeviceInput): Promise<Device> {
   return invoke<Device>("create_device", {
-    name: input.name,
+    deviceName: input.deviceName,
     host: input.host,
     port: input.port,
+    macAddress: blankToNull(input.macAddress),
     username: input.username,
     password: input.password,
   });
@@ -27,11 +28,25 @@ export async function createDevice(input: CreateDeviceInput): Promise<Device> {
 export async function updateDevice(input: UpdateDeviceInput): Promise<Device> {
   return invoke<Device>("update_device", {
     id: input.id,
-    name: input.name,
+    deviceName: input.deviceName,
     host: input.host,
     port: input.port,
+    macAddress: blankToNull(input.macAddress),
     username: input.username,
   });
+}
+
+export async function activateDevice(id: string): Promise<Device> {
+  return invoke<Device>("activate_device", { id });
+}
+
+export async function deactivateDevice(id: string): Promise<Device> {
+  return invoke<Device>("deactivate_device", { id });
+}
+
+function blankToNull(value: string): string | null {
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? null : trimmed;
 }
 
 export async function setDevicePassword(
@@ -48,7 +63,9 @@ export async function testDeviceConnection(id: string): Promise<Device> {
 export function deviceErrorMessage(code: string): string {
   switch (code) {
     case "DEVICE_INVALID_NAME":
-      return "Enter a name (1–200 characters).";
+      return "Enter a device name (1–200 characters).";
+    case "DEVICE_INVALID_MAC":
+      return "Enter a MAC address as six hex pairs, or leave it blank.";
     case "DEVICE_INVALID_HOST":
       return "Enter a hostname or IPv4 address only (no URL).";
     case "DEVICE_INVALID_PORT":
@@ -69,6 +86,8 @@ export function deviceErrorMessage(code: string): string {
       return "The device returned an unexpected response.";
     case "DEVICE_SECRET_UNAVAILABLE":
       return "Could not access the secure credential store.";
+    case "DEVICE_SECRET_CORRUPT":
+      return "The saved device password cannot be read. Choose Set Password, enter it again, then test the connection.";
     case "DATABASE_UNAVAILABLE":
       return "PostgreSQL is not connected.";
     default:

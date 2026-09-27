@@ -22,7 +22,7 @@ Top bar
 Sidebar (only modules that exist) | Main content
 ```
 
-Today navigation is **Dashboard**, **Users**, **Devices**, **Credentials**, and **Enrollments**. Do not add Sync, Audit, or Settings until those domains exist.
+Today navigation is **Dashboard**, **Users**, **Assign to device**, **Devices**, and **Credentials**. Enrollment sits inside Credentials: a credential belongs to a user and to the device it was enrolled on. Assign to device picks a device, assigns selected users, and adds those users on the COSEC device. Do not add Audit or Settings until those domains exist.
 
 ## Page pattern
 
@@ -36,7 +36,7 @@ One purpose per page. Tables are first-class: headers, row actions, empty/loadin
 - Secondary: Cancel / Edit
 - Destructive: confirm with what happens, reversibility, and which resource
 
-Deactivate is a domain operation (`deactivateUser`). The UI must not invent status fields or Matrix columns.
+Activate and deactivate are domain operations (`activateUser`, `deactivateUser`). The update form changes username only. The Devices action assigns a user to many devices locally; it does not create the user on the Matrix device. The UI must not invent a status dropdown or Matrix columns.
 
 ## Feedback
 

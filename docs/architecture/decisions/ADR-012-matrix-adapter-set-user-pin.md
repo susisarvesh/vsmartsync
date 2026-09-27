@@ -13,7 +13,7 @@ Implement application-facing Adapter operations only:
 
 | Operation | Matrix mapping | Notes |
 |---|---|---|
-| `set_user` | `GET /device.cgi/users?action=set` with `user-id`, `ref-user-id`, optional `name`, `user-active` | Establishes/updates Matrix user identity. Create requires both IDs (guide). |
+| `set_user` | `GET /device.cgi/users?action=set` with `user-id`, `ref-user-id`, optional `name`, `user-active`, optional `enable-fr` | Establishes/updates Matrix user identity. Create requires both IDs (guide). Face enrollment sets `enable-fr=1` so recognition is on for that user. |
 | `set_pin` | `GET /device.cgi/users?action=set` with `user-id`, `user-pin` | Operates on an **existing** Matrix user. Does **not** send `ref-user-id`. Empty PIN clears (`user-pin=`). |
 | `set_card` | **Deferred** | Requires hardware capture or Matrix confirmation of the Card path. |
 

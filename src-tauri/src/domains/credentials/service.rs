@@ -59,6 +59,44 @@ pub async fn create_credential(
     get_credential(credentials, record.id).await
 }
 
+pub async fn record_hardware_credential(
+    credentials: &CredentialRepository,
+    users: &UserRepository,
+    vault: &SecretVault,
+    user_id: Uuid,
+    credential_type: CredentialType,
+) -> Result<Credential, CredentialError> {
+    if credential_type.is_operator_secret() {
+        return Err(CredentialError::InvalidType);
+    }
+    ensure_user_exists(users, user_id).await?;
+    let id = Uuid::new_v4();
+    let marker = format!("enrolled:{id}");
+    let ciphertext = vault.encrypt(&marker).map_err(map_secret_error)?;
+    let digest = value_digest(credential_type, &marker);
+    let now = Utc::now();
+    let record = CredentialWriteRecord {
+        id,
+        user_id,
+        credential_type: credential_type.as_str().to_string(),
+        value_ciphertext: ciphertext,
+        value_digest: digest,
+        display_hint: None,
+        status: CredentialStatus::Active.as_str().to_string(),
+        created_at: now,
+        updated_at: now,
+    };
+    credentials.insert(&record).await.map_err(map_db_error)?;
+    tracing::info!(
+        credential_id = %id,
+        user_id = %user_id,
+        credential_type = credential_type.as_str(),
+        command = "record_hardware_credential",
+        "recorded hardware enrollment credential"
+    );
+    get_credential(credentials, id).await
+}
+
 pub async fn list_credentials(
     credentials: &CredentialRepository,
     filter: CredentialListFilter,

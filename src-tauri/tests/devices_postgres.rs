@@ -6,7 +6,8 @@ use uuid::Uuid;
 use vsmart_sync_lib::database::repositories::DeviceRepository;
 use vsmart_sync_lib::database::{connect_and_migrate, DatabaseConfig};
 use vsmart_sync_lib::domains::devices::{
-    create_device, list_devices, set_device_password, update_device, ConnectionStatus, DeviceError,
+    activate_device, create_device, deactivate_device, list_devices, set_device_password,
+    update_device, ConnectionStatus, DeviceError, DeviceStatus,
 };
 use vsmart_sync_lib::DevicePasswordVault;
 
@@ -38,14 +39,18 @@ async fn devices_create_list_update_password() {
         "  Lobby Door  ",
         &host,
         Some(8080),
+        Some("aa-bb-cc-dd-ee-01"),
         "admin",
         "initial-secret",
     )
     .await
     .expect("create");
-    assert_eq!(created.name, "Lobby Door");
+    assert_eq!(created.device_name, "Lobby Door");
     assert_eq!(created.host, host);
     assert_eq!(created.port, 8080);
+    assert_eq!(created.mac_address.as_deref(), Some("AA:BB:CC:DD:EE:01"));
+    assert!(created.device_model.is_none());
+    assert_eq!(created.status, DeviceStatus::Active);
     assert_eq!(created.connection_status, ConnectionStatus::Unknown);
     assert!(created.last_seen_at.is_none());
 
@@ -55,11 +60,27 @@ async fn devices_create_list_update_password() {
     assert!(!json.contains("password"));
     assert!(!json.contains("ciphertext"));
 
-    let updated = update_device(&repo, created.id, "Lobby Updated", &host, 8080, "operator")
-        .await
-        .expect("update");
-    assert_eq!(updated.name, "Lobby Updated");
+    let updated = update_device(
+        &repo,
+        created.id,
+        "Lobby Updated",
+        &host,
+        8080,
+        None,
+        "operator",
+    )
+    .await
+    .expect("update");
+    assert_eq!(updated.device_name, "Lobby Updated");
     assert_eq!(updated.username, "operator");
+    assert!(updated.mac_address.is_none());
+
+    let inactive = deactivate_device(&repo, created.id)
+        .await
+        .expect("deactivate");
+    assert_eq!(inactive.status, DeviceStatus::Inactive);
+    let active = activate_device(&repo, created.id).await.expect("activate");
+    assert_eq!(active.status, DeviceStatus::Active);
 
     let with_password = set_device_password(&repo, &vault, created.id, "rotated-secret")
         .await
@@ -93,35 +114,77 @@ async fn devices_reject_invalid_and_duplicate() {
     );
 
     assert_eq!(
-        create_device(&repo, &vault, "   ", &host, Some(80), "admin", "x")
+        create_device(&repo, &vault, "   ", &host, Some(80), None, "admin", "x")
             .await
             .unwrap_err(),
         DeviceError::InvalidName
     );
     assert_eq!(
-        create_device(&repo, &vault, "Door", "http://evil", Some(80), "admin", "x")
-            .await
-            .unwrap_err(),
+        create_device(
+            &repo,
+            &vault,
+            "Door",
+            "http://evil",
+            Some(80),
+            None,
+            "admin",
+            "x",
+        )
+        .await
+        .unwrap_err(),
         DeviceError::InvalidHost
     );
     assert_eq!(
-        create_device(&repo, &vault, "Door", &host, Some(0), "admin", "x")
+        create_device(&repo, &vault, "Door", &host, Some(0), None, "admin", "x")
             .await
             .unwrap_err(),
         DeviceError::InvalidPort
     );
-
-    create_device(&repo, &vault, "Door A", &host, Some(90), "admin", "secret")
-        .await
-        .expect("first");
     assert_eq!(
-        create_device(&repo, &vault, "Door B", &host, Some(90), "admin", "secret")
-            .await
-            .unwrap_err(),
+        create_device(
+            &repo,
+            &vault,
+            "Door",
+            &host,
+            Some(80),
+            Some("zz"),
+            "admin",
+            "x"
+        )
+        .await
+        .unwrap_err(),
+        DeviceError::InvalidMac
+    );
+
+    create_device(
+        &repo,
+        &vault,
+        "Door A",
+        &host,
+        Some(90),
+        None,
+        "admin",
+        "secret",
+    )
+    .await
+    .expect("first");
+    assert_eq!(
+        create_device(
+            &repo,
+            &vault,
+            "Door B",
+            &host,
+            Some(90),
+            None,
+            "admin",
+            "secret",
+        )
+        .await
+        .unwrap_err(),
         DeviceError::Duplicate
     );
     assert_eq!(
-        update_device(&repo, Uuid::nil(), "Ada", "10.0.0.1", 80, "admin")
+        update_device(&repo, Uuid::nil(), "Ada", "10.0.0.1", 80, None, "admin")
             .await
             .unwrap_err(),
         DeviceError::NotFound

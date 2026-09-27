@@ -27,11 +27,15 @@ pub fn parse_response_code(body: &str) -> Option<i32> {
 }
 
 fn parse_key_value_line(line: &str) -> Option<i32> {
-    let (key, value) = line.split_once('=')?;
-    if !key.trim().eq_ignore_ascii_case("Response-Code") {
-        return None;
+    for token in line.split_whitespace() {
+        let Some((key, value)) = token.split_once('=') else {
+            continue;
+        };
+        if key.trim().eq_ignore_ascii_case("Response-Code") {
+            return value.trim().trim_matches('"').parse().ok();
+        }
     }
-    value.trim().parse().ok()
+    None
 }
 
 fn parse_xml_element(fragment: &str) -> Option<i32> {
@@ -57,6 +61,14 @@ mod tests {
     fn parses_multiline_body() {
         let body = "name=Lobby\r\nResponse-Code=21\r\n";
         assert_eq!(parse_response_code(body), Some(21));
+    }
+
+    #[test]
+    fn parses_response_code_after_other_fields_on_the_same_line() {
+        assert_eq!(
+            parse_response_code("face-count=0 card-count=0 Response-Code=0"),
+            Some(0)
+        );
     }
 
     #[test]

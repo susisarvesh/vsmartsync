@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  activateDevice,
   createDevice,
+  deactivateDevice,
   deviceErrorMessage,
   listDevices,
   setDevicePassword,
@@ -50,6 +52,32 @@ export function useUpdateDevice() {
   return useMutation({
     mutationFn: (input: UpdateDeviceInput) => updateDevice(input),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["devices"] }),
+  });
+}
+
+export function useActivateDevice() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => activateDevice(id),
+    onSuccess: (device: Device) => {
+      queryClient.setQueryData<Device[]>(["devices"], (current) =>
+        current?.map((item) => (item.id === device.id ? device : item)),
+      );
+      void queryClient.invalidateQueries({ queryKey: ["devices"] });
+    },
+  });
+}
+
+export function useDeactivateDevice() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => deactivateDevice(id),
+    onSuccess: (device: Device) => {
+      queryClient.setQueryData<Device[]>(["devices"], (current) =>
+        current?.map((item) => (item.id === device.id ? device : item)),
+      );
+      void queryClient.invalidateQueries({ queryKey: ["devices"] });
+    },
   });
 }
 

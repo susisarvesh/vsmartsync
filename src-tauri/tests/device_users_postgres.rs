@@ -60,6 +60,7 @@ async fn setup() -> Fixture {
         &format!("Door {}", Uuid::new_v4()),
         &host,
         Some(80),
+        None,
         "admin",
         "secret",
     )
@@ -144,6 +145,7 @@ async fn device_users_allocate_independently_per_device() {
         &format!("Door B {}", Uuid::new_v4()),
         &host,
         Some(80),
+        None,
         "admin",
         "secret",
     )

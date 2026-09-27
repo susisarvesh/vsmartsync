@@ -6,7 +6,7 @@ use uuid::Uuid;
 use vsmart_sync_lib::database::repositories::UserRepository;
 use vsmart_sync_lib::database::{connect_and_migrate, DatabaseConfig};
 use vsmart_sync_lib::domains::users::{
-    create_user, deactivate_user, list_users, update_user_name, UserError, UserStatus,
+    activate_user, create_user, deactivate_user, list_users, update_user, UserError, UserStatus,
 };
 
 fn load_test_config() -> DatabaseConfig {
@@ -18,7 +18,7 @@ fn load_test_config() -> DatabaseConfig {
 
 #[tokio::test]
 #[ignore = "requires a running PostgreSQL instance"]
-async fn users_create_list_update_deactivate() {
+async fn users_create_list_update_activate_deactivate() {
     let pool = connect_and_migrate(&load_test_config())
         .await
         .expect("postgresql should be reachable");
@@ -27,16 +27,16 @@ async fn users_create_list_update_deactivate() {
     let created = create_user(&repo, "  Integration User  ")
         .await
         .expect("create");
-    assert_eq!(created.name, "Integration User");
+    assert_eq!(created.username, "Integration User");
     assert_eq!(created.status, UserStatus::Active);
 
     let listed = list_users(&repo).await.expect("list");
     assert!(listed.iter().any(|user| user.id == created.id));
 
-    let renamed = update_user_name(&repo, created.id, "Renamed User")
+    let renamed = update_user(&repo, created.id, "Renamed User")
         .await
         .expect("update");
-    assert_eq!(renamed.name, "Renamed User");
+    assert_eq!(renamed.username, "Renamed User");
     assert_eq!(renamed.status, UserStatus::Active);
 
     let deactivated = deactivate_user(&repo, created.id)
@@ -48,11 +48,20 @@ async fn users_create_list_update_deactivate() {
         .await
         .expect("idempotent");
     assert_eq!(again.status, UserStatus::Inactive);
+
+    let activated = activate_user(&repo, created.id).await.expect("activate");
+    assert_eq!(activated.status, UserStatus::Active);
+    assert_eq!(activated.username, "Renamed User");
+
+    let still_active = activate_user(&repo, created.id)
+        .await
+        .expect("activate idempotent");
+    assert_eq!(still_active.status, UserStatus::Active);
 }
 
 #[tokio::test]
 #[ignore = "requires a running PostgreSQL instance"]
-async fn users_reject_invalid_name_and_missing_id() {
+async fn users_reject_invalid_username_and_missing_id() {
     let pool = connect_and_migrate(&load_test_config())
         .await
         .expect("postgresql should be reachable");
@@ -60,16 +69,18 @@ async fn users_reject_invalid_name_and_missing_id() {
 
     assert_eq!(
         create_user(&repo, "   ").await.unwrap_err(),
-        UserError::InvalidName
+        UserError::InvalidUsername
     );
     assert_eq!(
-        update_user_name(&repo, Uuid::nil(), "Ada")
-            .await
-            .unwrap_err(),
+        update_user(&repo, Uuid::nil(), "Ada").await.unwrap_err(),
         UserError::NotFound
     );
     assert_eq!(
         deactivate_user(&repo, Uuid::nil()).await.unwrap_err(),
+        UserError::NotFound
+    );
+    assert_eq!(
+        activate_user(&repo, Uuid::nil()).await.unwrap_err(),
         UserError::NotFound
     );
 }
@@ -84,7 +95,7 @@ async fn users_update_does_not_accept_status_from_caller() {
     let created = create_user(&repo, &format!("Status Guard {}", Uuid::new_v4()))
         .await
         .expect("create");
-    let updated = update_user_name(&repo, created.id, "Still Active")
+    let updated = update_user(&repo, created.id, "Still Active")
         .await
         .expect("update");
     assert_eq!(updated.status, UserStatus::Active);

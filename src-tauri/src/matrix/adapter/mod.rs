@@ -10,6 +10,10 @@
 use thiserror::Error;
 
 use crate::matrix::client::{MatrixClientError, MatrixHttpClient};
+use crate::matrix::enrollment::{
+    config_field, credential_counts, face_only_door, supported_enroll_types, CredentialCounts,
+    HardwareEnrollType,
+};
 
 /// Reachability probe errors (Devices domain). Subset of transport failures.
 #[derive(Debug, PartialEq, Eq)]
@@ -50,6 +54,8 @@ pub struct SetUserParams {
     pub ref_user_id: u32,
     pub name: Option<String>,
     pub user_active: Option<bool>,
+    /// Guide: `enable-fr` on `/users`. `1` turns face recognition on for this user.
+    pub enable_fr: Option<bool>,
 }
 
 /// Set or clear PIN for an **existing** Matrix user (`user-pin` on `/users`).
@@ -115,6 +121,12 @@ impl MatrixAdapter {
                 if active { "1".into() } else { "0".into() },
             ));
         }
+        if let Some(enabled) = params.enable_fr {
+            owned.push((
+                "enable-fr".into(),
+                if enabled { "1".into() } else { "0".into() },
+            ));
+        }
 
         let fields: Vec<(&str, &str)> = owned
             .iter()
@@ -126,6 +138,34 @@ impl MatrixAdapter {
             .await
             .map(|_| ())
             .map_err(map_adapter_error)
+    }
+
+    /// Delete a user on the device (`/users?action=delete`).
+    ///
+    /// The guide says this also removes that user's credentials on the device.
+    /// Response codes 10 and 13 mean the user is already absent.
+    pub async fn delete_user(
+        &self,
+        host: &str,
+        port: u16,
+        username: &str,
+        password: &str,
+        matrix_user_id: &str,
+    ) -> Result<(), MatrixAdapterError> {
+        let user_id = validate_user_id(matrix_user_id)?;
+        match self
+            .client
+            .users_delete(host, port, username, password, user_id.as_str())
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(crate::matrix::client::MatrixClientError::ApiError { code })
+                if device_user_already_gone(code) =>
+            {
+                Ok(())
+            }
+            Err(error) => Err(map_adapter_error(error)),
+        }
     }
 
     /// Set PIN for an existing Matrix user (`user-pin` on `/users?action=set`).
@@ -155,6 +195,171 @@ impl MatrixAdapter {
             .map(|_| ())
             .map_err(map_adapter_error)
     }
+
+    /// Read basic config, reader config, and enroll options, then return the
+    /// enrollment types those documents report.
+    pub async fn enrollment_capabilities(
+        &self,
+        host: &str,
+        port: u16,
+        username: &str,
+        password: &str,
+    ) -> Result<Vec<HardwareEnrollType>, MatrixAdapterError> {
+        let basic = self
+            .client
+            .get_device_basic_config(host, port, username, password)
+            .await
+            .map_err(map_adapter_error)?;
+        let reader = self
+            .client
+            .get_reader_config(host, port, username, password)
+            .await
+            .map_err(map_adapter_error)?;
+        let options = self
+            .client
+            .get_enroll_options(host, port, username, password)
+            .await
+            .map_err(map_adapter_error)?;
+        Ok(supported_enroll_types(
+            &basic.body,
+            &reader.body,
+            &options.body,
+        ))
+    }
+
+    /// Turn face recognition on or off for an existing Matrix user (`enable-fr`).
+    ///
+    /// The guide allows an update with only the alphanumeric user id.
+    pub async fn set_face_recognition_enabled(
+        &self,
+        host: &str,
+        port: u16,
+        username: &str,
+        password: &str,
+        matrix_user_id: &str,
+        enabled: bool,
+    ) -> Result<(), MatrixAdapterError> {
+        let user_id = validate_user_id(matrix_user_id)?;
+        let flag = if enabled { "1" } else { "0" };
+        self.client
+            .users_set(
+                host,
+                port,
+                username,
+                password,
+                &[("user-id", user_id.as_str()), ("enable-fr", flag)],
+            )
+            .await
+            .map(|_| ())
+            .map_err(map_adapter_error)
+    }
+
+    /// Face-only doors do not open a card prompt. Card & Face keeps face and
+    /// allows read-only card enrollment.
+    pub async fn enable_card_and_face_access(
+        &self,
+        host: &str,
+        port: u16,
+        username: &str,
+        password: &str,
+    ) -> Result<(), MatrixAdapterError> {
+        let reader = self
+            .client
+            .get_reader_config(host, port, username, password)
+            .await
+            .map_err(map_adapter_error)?;
+        if !face_only_door(&reader.body) {
+            return Ok(());
+        }
+        tracing::info!("door access mode is face only; setting card and face for card enrollment");
+        self.client
+            .set_door_access_mode(host, port, username, password, "16")
+            .await
+            .map(|_| ())
+            .map_err(map_adapter_error)
+    }
+
+    /// Start physical enrollment for a Matrix user that already exists on the device.
+    pub async fn enroll_user(
+        &self,
+        host: &str,
+        port: u16,
+        username: &str,
+        password: &str,
+        matrix_user_id: &str,
+        enroll_type: HardwareEnrollType,
+    ) -> Result<(), MatrixAdapterError> {
+        let user_id = validate_user_id(matrix_user_id)?;
+        let type_code = enroll_type.matrix_type().to_string();
+        self.client
+            .enroll_user(
+                host,
+                port,
+                username,
+                password,
+                user_id.as_str(),
+                type_code.as_str(),
+                enroll_type.count_fields(),
+            )
+            .await
+            .map(|_| ())
+            .map_err(map_adapter_error)
+    }
+
+    /// `command?action=getcount` for the Matrix user id used by `enrolluser`.
+    pub async fn credential_counts(
+        &self,
+        host: &str,
+        port: u16,
+        username: &str,
+        password: &str,
+        matrix_user_id: &str,
+    ) -> Result<CredentialCounts, MatrixAdapterError> {
+        let user_id = validate_user_id(matrix_user_id)?;
+        let primary = self
+            .client
+            .get_credential_counts(host, port, username, password, user_id.as_str())
+            .await;
+        if let Ok(body) = &primary {
+            let counts = credential_counts(&body.body);
+            if counts_present(counts) {
+                return Ok(counts);
+            }
+        }
+        if let Ok(user) = self
+            .client
+            .get_user(host, port, username, password, user_id.as_str())
+            .await
+        {
+            if let Some(index) = config_field(&user.body, "user-index") {
+                let index = index.trim();
+                if !index.is_empty() && index != user_id.as_str() {
+                    if let Ok(body) = self
+                        .client
+                        .get_credential_counts(host, port, username, password, index)
+                        .await
+                    {
+                        let counts = credential_counts(&body.body);
+                        if counts_present(counts) {
+                            return Ok(counts);
+                        }
+                    }
+                }
+            }
+        }
+        primary
+            .map(|body| credential_counts(&body.body))
+            .map_err(map_adapter_error)
+    }
+}
+
+/// Guide: 10 is no record found, 13 is user id not found.
+pub fn device_user_already_gone(code: i32) -> bool {
+    code == 10 || code == 13
+}
+
+fn counts_present(counts: CredentialCounts) -> bool {
+    counts.cards > 0 || counts.faces > 0 || counts.fingers > 0
 }
 
 /// Guide: alphanumeric user-id, max 15 characters.
@@ -240,8 +445,8 @@ fn map_adapter_error(error: MatrixClientError) -> MatrixAdapterError {
 #[cfg(test)]
 mod tests {
     use super::{
-        validate_ref_user_id, validate_user_id, validate_user_name, validate_user_pin,
-        MatrixAdapter, MatrixAdapterError, SetPinParams, SetUserParams,
+        device_user_already_gone, validate_ref_user_id, validate_user_id, validate_user_name,
+        validate_user_pin, MatrixAdapter, MatrixAdapterError, SetPinParams, SetUserParams,
     };
     use wiremock::matchers::{basic_auth, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -256,6 +461,49 @@ mod tests {
         assert!(validate_ref_user_id(10000001).is_ok());
         assert!(validate_user_name("Ravi Kumar!!").is_err());
         assert!(validate_user_name("Ravi").is_ok());
+    }
+
+    #[test]
+    fn missing_user_on_device_is_already_gone() {
+        assert!(device_user_already_gone(10));
+        assert!(device_user_already_gone(13));
+        assert!(!device_user_already_gone(0));
+        assert!(!device_user_already_gone(16));
+    }
+
+    #[tokio::test]
+    async fn delete_user_sends_documented_users_delete() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/device.cgi/users"))
+            .and(query_param("action", "delete"))
+            .and(query_param("user-id", "VS000001"))
+            .and(basic_auth("admin", "secret"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("Response-Code=0"))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/device.cgi/users"))
+            .respond_with(
+                ResponseTemplate::new(401)
+                    .insert_header("WWW-Authenticate", "Basic realm=\"device\""),
+            )
+            .with_priority(2)
+            .mount(&server)
+            .await;
+
+        let adapter = MatrixAdapter::new().unwrap();
+        adapter
+            .delete_user(
+                "127.0.0.1",
+                server.address().port(),
+                "admin",
+                "secret",
+                "VS000001",
+            )
+            .await
+            .unwrap();
     }
 
     #[test]
@@ -279,6 +527,16 @@ mod tests {
             .and(query_param("user-active", "1"))
             .and(basic_auth("admin", "secret"))
             .respond_with(ResponseTemplate::new(200).set_body_string("Response-Code=0"))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/device.cgi/users"))
+            .respond_with(
+                ResponseTemplate::new(401)
+                    .insert_header("WWW-Authenticate", "Basic realm=\"device\""),
+            )
+            .with_priority(2)
             .mount(&server)
             .await;
 
@@ -294,6 +552,7 @@ mod tests {
                     ref_user_id: 10000001,
                     name: Some("Ravi".into()),
                     user_active: Some(true),
+                    enable_fr: None,
                 },
             )
             .await
@@ -321,6 +580,7 @@ mod tests {
                     ref_user_id: 10000001,
                     name: None,
                     user_active: None,
+                    enable_fr: None,
                 },
             )
             .await
@@ -338,6 +598,16 @@ mod tests {
             .and(query_param("user-pin", "4321"))
             .and(basic_auth("admin", "secret"))
             .respond_with(ResponseTemplate::new(200).set_body_string("Response-Code=0"))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/device.cgi/users"))
+            .respond_with(
+                ResponseTemplate::new(401)
+                    .insert_header("WWW-Authenticate", "Basic realm=\"device\""),
+            )
+            .with_priority(2)
             .mount(&server)
             .await;
 

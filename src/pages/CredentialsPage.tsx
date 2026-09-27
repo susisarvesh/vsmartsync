@@ -39,6 +39,7 @@ import {
   useUpdateCredential,
 } from "@/hooks/useCredentials";
 import { useUsersQuery } from "@/hooks/useUsers";
+import { EnrollmentsPage } from "@/pages/EnrollmentsPage";
 import { formatDateTime } from "@/lib/utils";
 import type {
   Credential,
@@ -247,7 +248,7 @@ export function CredentialsPage({ enabled }: CredentialsPageProps) {
     <div>
       <PageHeader
         title="Credentials"
-        description="Associate Card and PIN credentials with users. Secrets stay in Rust."
+        description="A credential belongs to a user and to the device it was enrolled on. Enrollment stays on this page."
         action={
           <Button type="button" onClick={() => setCreateOpen(true)}>
             <Plus className="h-4 w-4" aria-hidden />
@@ -278,7 +279,7 @@ export function CredentialsPage({ enabled }: CredentialsPageProps) {
             <SelectItem value="all">All users</SelectItem>
             {(usersQuery.data ?? []).map((user) => (
               <SelectItem key={user.id} value={user.id}>
-                {user.name}
+                {user.username}
               </SelectItem>
             ))}
           </SelectContent>
@@ -349,7 +350,7 @@ export function CredentialsPage({ enabled }: CredentialsPageProps) {
       ) : null}
 
       {filtered.length > 0 ? (
-        <div className="overflow-hidden rounded-lg border border-border bg-card">
+        <div className="overflow-x-auto rounded-lg border border-border bg-card">
           <table className="w-full border-collapse text-sm">
             <thead className="bg-muted/60 text-left text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
@@ -458,7 +459,7 @@ export function CredentialsPage({ enabled }: CredentialsPageProps) {
                     .filter((user) => user.status === "active")
                     .map((user) => (
                       <SelectItem key={user.id} value={user.id}>
-                        {user.name}
+                        {user.username}
                       </SelectItem>
                     ))}
                 </SelectContent>
@@ -615,6 +616,7 @@ export function CredentialsPage({ enabled }: CredentialsPageProps) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <EnrollmentsPage enabled={enabled} embedded />
     </div>
   );
 }

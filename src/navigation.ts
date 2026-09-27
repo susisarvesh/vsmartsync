@@ -1,9 +1,9 @@
 export type AppRoute =
   | "dashboard"
   | "users"
+  | "assign-device"
   | "devices"
-  | "credentials"
-  | "enrollments";
+  | "credentials";
 
 export const NAV_ITEMS: Array<{
   id: AppRoute;
@@ -21,6 +21,11 @@ export const NAV_ITEMS: Array<{
     description: "Manage users registered in the system",
   },
   {
+    id: "assign-device",
+    label: "Assign to device",
+    description: "Choose a device, then assign users to it",
+  },
+  {
     id: "devices",
     label: "Devices",
     description: "Register and reach Matrix COSEC devices",
@@ -28,11 +33,6 @@ export const NAV_ITEMS: Array<{
   {
     id: "credentials",
     label: "Credentials",
-    description: "Manage user Card and PIN credentials",
-  },
-  {
-    id: "enrollments",
-    label: "Enrollments",
-    description: "Assign credentials to devices",
+    description: "Credentials for a user, including enrollment on a device",
   },
 ];

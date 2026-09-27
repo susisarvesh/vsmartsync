@@ -31,25 +31,33 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toaster";
+import { useDevicesQuery } from "@/hooks/useDevices";
+import { asSyncErrorMessage, useSyncAssignedUsers } from "@/hooks/useSync";
+import { syncErrorMessage } from "@/services/sync";
 import {
   asErrorMessage,
+  useActivateUser,
+  useAssignUserDevice,
   useCreateUser,
   useDeactivateUser,
+  useDeleteUser,
+  useRemoveUserDevice,
   useUpdateUser,
+  useUserDevicesQuery,
   useUsersQuery,
 } from "@/hooks/useUsers";
 import { formatDateTime } from "@/lib/utils";
-import type { User } from "@/types/users";
+import type { User, UserDeviceAssignment } from "@/types/users";
 
-const nameSchema = z.object({
-  name: z
+const usernameSchema = z.object({
+  username: z
     .string()
     .trim()
-    .min(1, "Name must contain at least 1 character.")
-    .max(200, "Name must be 200 characters or fewer."),
+    .min(1, "Username must contain at least 1 character.")
+    .max(200, "Username must be 200 characters or fewer."),
 });
 
-type NameForm = z.infer<typeof nameSchema>;
+type UsernameForm = z.infer<typeof usernameSchema>;
 
 type UsersPageProps = {
   enabled: boolean;
@@ -60,23 +68,40 @@ export function UsersPage({ enabled }: UsersPageProps) {
   const usersQuery = useUsersQuery(enabled);
   const createUser = useCreateUser();
   const updateUser = useUpdateUser();
+  const activateUser = useActivateUser();
   const deactivateUser = useDeactivateUser();
+  const deleteUser = useDeleteUser();
+  const devicesQuery = useDevicesQuery(enabled);
+  const assignUserDevice = useAssignUserDevice();
+  const syncUsers = useSyncAssignedUsers();
+  const removeUserDevice = useRemoveUserDevice();
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">(
     "all",
   );
   const [createOpen, setCreateOpen] = useState(false);
-  const [renameUser, setRenameUser] = useState<User | null>(null);
+  const [viewUser, setViewUser] = useState<User | null>(null);
+  const [editUser, setEditUser] = useState<User | null>(null);
+  const [activateTarget, setActivateTarget] = useState<User | null>(null);
   const [deactivateTarget, setDeactivateTarget] = useState<User | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
+  const [assignUser, setAssignUser] = useState<User | null>(null);
+  const [selectedDeviceId, setSelectedDeviceId] = useState("");
+  const [removeTarget, setRemoveTarget] = useState<UserDeviceAssignment | null>(
+    null,
+  );
 
-  const createForm = useForm<NameForm>({
-    resolver: zodResolver(nameSchema),
-    defaultValues: { name: "" },
+  const createForm = useForm<UsernameForm>({
+    resolver: zodResolver(usernameSchema),
+    defaultValues: { username: "" },
   });
-  const renameForm = useForm<NameForm>({
-    resolver: zodResolver(nameSchema),
-    defaultValues: { name: "" },
+  const assignmentUserId = assignUser?.id ?? viewUser?.id ?? null;
+  const assignmentsQuery = useUserDevicesQuery(assignmentUserId);
+
+  const editForm = useForm<UsernameForm>({
+    resolver: zodResolver(usernameSchema),
+    defaultValues: { username: "" },
   });
 
   const filtered = useMemo(() => {
@@ -89,18 +114,18 @@ export function UsersPage({ enabled }: UsersPageProps) {
       if (!query) {
         return true;
       }
-      return user.name.toLowerCase().includes(query);
+      return user.username.toLowerCase().includes(query);
     });
   }, [usersQuery.data, search, statusFilter]);
 
-  async function onCreate(values: NameForm) {
+  async function onCreate(values: UsernameForm) {
     try {
-      await createUser.mutateAsync(values.name);
+      await createUser.mutateAsync(values.username);
       toast({
         title: "User created successfully",
         variant: "success",
       });
-      createForm.reset({ name: "" });
+      createForm.reset({ username: "" });
       setCreateOpen(false);
     } catch (reason: unknown) {
       toast({
@@ -111,20 +136,41 @@ export function UsersPage({ enabled }: UsersPageProps) {
     }
   }
 
-  async function onRename(values: NameForm) {
-    if (!renameUser) {
+  async function onEdit(values: UsernameForm) {
+    if (!editUser) {
       return;
     }
     try {
-      await updateUser.mutateAsync({ id: renameUser.id, name: values.name });
+      await updateUser.mutateAsync({ id: editUser.id, username: values.username });
       toast({
         title: "User updated successfully",
         variant: "success",
       });
-      setRenameUser(null);
+      setEditUser(null);
     } catch (reason: unknown) {
       toast({
-        title: "Could not rename user",
+        title: "Could not update user",
+        description: asErrorMessage(reason),
+        variant: "destructive",
+      });
+    }
+  }
+
+  async function onConfirmActivate() {
+    if (!activateTarget) {
+      return;
+    }
+    try {
+      await activateUser.mutateAsync(activateTarget.id);
+      toast({
+        title: "User activated",
+        description: `${activateTarget.username} is now active.`,
+        variant: "success",
+      });
+      setActivateTarget(null);
+    } catch (reason: unknown) {
+      toast({
+        title: "Could not activate user",
         description: asErrorMessage(reason),
         variant: "destructive",
       });
@@ -139,7 +185,7 @@ export function UsersPage({ enabled }: UsersPageProps) {
       await deactivateUser.mutateAsync(deactivateTarget.id);
       toast({
         title: "User deactivated",
-        description: `${deactivateTarget.name} is now inactive.`,
+        description: `${deactivateTarget.username} is now inactive.`,
         variant: "success",
       });
       setDeactivateTarget(null);
@@ -151,6 +197,111 @@ export function UsersPage({ enabled }: UsersPageProps) {
       });
     }
   }
+
+  async function onConfirmDelete() {
+    if (!deleteTarget) {
+      return;
+    }
+    try {
+      await deleteUser.mutateAsync(deleteTarget.id);
+      toast({
+        title: "User deleted",
+        description: `${deleteTarget.username} was removed here and on each device that had this user.`,
+        variant: "success",
+      });
+      setDeleteTarget(null);
+    } catch (reason: unknown) {
+      toast({
+        title: "Could not delete user",
+        description: asErrorMessage(reason),
+        variant: "destructive",
+      });
+    }
+  }
+
+  async function onAssignDevice() {
+    if (!assignUser || !selectedDeviceId) {
+      return;
+    }
+    try {
+      await assignUserDevice.mutateAsync({
+        userId: assignUser.id,
+        deviceId: selectedDeviceId,
+      });
+      const deviceName =
+        (devicesQuery.data ?? []).find((device) => device.id === selectedDeviceId)
+          ?.deviceName ?? "the device";
+      toast({
+        title: "Device assigned",
+        description: `${assignUser.username} is assigned to ${deviceName}.`,
+        variant: "success",
+      });
+      try {
+        const result = await syncUsers.mutateAsync({
+          deviceId: selectedDeviceId,
+          userIds: [assignUser.id],
+        });
+        if (result.synced.length > 0) {
+          toast({
+            title: "User added on the device",
+            description: `${assignUser.username} was added on ${deviceName}.`,
+            variant: "success",
+          });
+        }
+        if (result.failed.length > 0) {
+          toast({
+            title: "User was not added on the device",
+            description: syncErrorMessage(result.failed[0]?.code ?? ""),
+            variant: "destructive",
+          });
+        }
+      } catch (reason: unknown) {
+        toast({
+          title: "User was not added on the device",
+          description: asSyncErrorMessage(reason),
+          variant: "destructive",
+        });
+      }
+      setSelectedDeviceId("");
+    } catch (reason: unknown) {
+      toast({
+        title: "Could not assign device",
+        description: asErrorMessage(reason),
+        variant: "destructive",
+      });
+    }
+  }
+
+  async function onConfirmRemoveDevice() {
+    if (!assignUser || !removeTarget) {
+      return;
+    }
+    try {
+      await removeUserDevice.mutateAsync({
+        userId: assignUser.id,
+        deviceId: removeTarget.deviceId,
+      });
+      toast({
+        title: "Assignment removed",
+        description: `${assignUser.username} is no longer assigned to ${removeTarget.deviceName}.`,
+        variant: "success",
+      });
+      setRemoveTarget(null);
+    } catch (reason: unknown) {
+      toast({
+        title: "Could not remove assignment",
+        description: asErrorMessage(reason),
+        variant: "destructive",
+      });
+    }
+  }
+
+  const assignedDeviceIds = new Set(
+    (assignmentsQuery.data ?? []).map((assignment) => assignment.deviceId),
+  );
+  const availableDevices = (devicesQuery.data ?? []).filter(
+    (device) => !assignedDeviceIds.has(device.id),
+  );
 
   if (!enabled) {
     return (
@@ -171,7 +322,7 @@ export function UsersPage({ enabled }: UsersPageProps) {
     <div>
       <PageHeader
         title="Users"
-        description="Manage users registered in the system. Status changes only through Deactivate."
+        description="Create, view, and update people. New users start Active. Delete removes the person here and on every Matrix device that already has them."
         action={
           <Button type="button" onClick={() => setCreateOpen(true)}>
             <Plus className="h-4 w-4" aria-hidden />
@@ -247,11 +398,11 @@ export function UsersPage({ enabled }: UsersPageProps) {
       ) : null}
 
       {filtered.length > 0 ? (
-        <div className="overflow-hidden rounded-lg border border-border bg-card">
+        <div className="overflow-x-auto rounded-lg border border-border bg-card">
           <table className="w-full border-collapse text-sm">
             <thead className="bg-muted/60 text-left text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
-                <th className="px-3 py-2 font-medium">Name</th>
+                <th className="px-3 py-2 font-medium">Username</th>
                 <th className="px-3 py-2 font-medium">Status</th>
                 <th className="px-3 py-2 font-medium">Created</th>
                 <th className="px-3 py-2 font-medium">Updated</th>
@@ -264,7 +415,7 @@ export function UsersPage({ enabled }: UsersPageProps) {
               {filtered.map((user) => (
                 <tr key={user.id} className="border-t border-border">
                   <td className="px-3 py-2 font-medium text-foreground">
-                    {user.name}
+                    {user.username}
                   </td>
                   <td className="px-3 py-2">
                     <StatusBadge status={user.status} />
@@ -282,27 +433,50 @@ export function UsersPage({ enabled }: UsersPageProps) {
                           type="button"
                           variant="ghost"
                           size="icon"
-                          aria-label={`Actions for ${user.name}`}
+                          aria-label={`Actions for ${user.username}`}
                         >
                           <MoreHorizontal className="h-4 w-4" />
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
+                        <DropdownMenuItem onSelect={() => setViewUser(user)}>
+                          View
+                        </DropdownMenuItem>
                         <DropdownMenuItem
                           onSelect={() => {
-                            setRenameUser(user);
-                            renameForm.reset({ name: user.name });
+                            setEditUser(user);
+                            editForm.reset({ username: user.username });
                           }}
                         >
-                          Rename
+                          Edit username
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onSelect={() => {
+                            setAssignUser(user);
+                            setSelectedDeviceId("");
+                          }}
+                        >
+                          Devices
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          disabled={user.status === "active"}
+                          onSelect={() => setActivateTarget(user)}
+                        >
+                          Activate
+                        </DropdownMenuItem>
                         <DropdownMenuItem
                           destructive
                           disabled={user.status === "inactive"}
                           onSelect={() => setDeactivateTarget(user)}
                         >
                           Deactivate
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          destructive
+                          onSelect={() => setDeleteTarget(user)}
+                        >
+                          Delete
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -328,16 +502,16 @@ export function UsersPage({ enabled }: UsersPageProps) {
             onSubmit={createForm.handleSubmit(onCreate)}
           >
             <div className="grid gap-1.5">
-              <Label htmlFor="create-user-name">Name</Label>
+              <Label htmlFor="create-user-username">Username</Label>
               <Input
-                id="create-user-name"
+                id="create-user-username"
                 autoComplete="off"
                 maxLength={200}
-                {...createForm.register("name")}
+                {...createForm.register("username")}
               />
-              {createForm.formState.errors.name ? (
+              {createForm.formState.errors.username ? (
                 <p className="text-xs text-destructive">
-                  {createForm.formState.errors.name.message}
+                  {createForm.formState.errors.username.message}
                 </p>
               ) : null}
             </div>
@@ -358,35 +532,233 @@ export function UsersPage({ enabled }: UsersPageProps) {
       </Dialog>
 
       <Dialog
-        open={Boolean(renameUser)}
+        open={Boolean(viewUser)}
         onOpenChange={(open) => {
           if (!open) {
-            setRenameUser(null);
+            setViewUser(null);
           }
         }}
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Rename user</DialogTitle>
+            <DialogTitle>{viewUser?.username ?? "User"}</DialogTitle>
             <DialogDescription>
-              Changes the display name only. Status is not edited here.
+              Local user record. Credentials are managed on the Credentials
+              page. Device assignment does not create the user on the device.
             </DialogDescription>
           </DialogHeader>
-          <form
-            className="grid gap-3"
-            onSubmit={renameForm.handleSubmit(onRename)}
-          >
+          <dl className="grid gap-2 text-sm">
+            <div>
+              <dt className="text-muted-foreground">ID</dt>
+              <dd className="font-mono text-xs">{viewUser?.id}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Username</dt>
+              <dd>{viewUser?.username}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Status</dt>
+              <dd>{viewUser ? <StatusBadge status={viewUser.status} /> : null}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Created</dt>
+              <dd>{viewUser ? formatDateTime(viewUser.createdAt) : null}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Updated</dt>
+              <dd>{viewUser ? formatDateTime(viewUser.updatedAt) : null}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Assigned devices</dt>
+              <dd>
+                {assignmentsQuery.isLoading ? "Loading…" : null}
+                {!assignmentsQuery.isLoading &&
+                (assignmentsQuery.data?.length ?? 0) === 0
+                  ? "None"
+                  : null}
+                {(assignmentsQuery.data ?? []).map((assignment) => (
+                  <div key={assignment.id}>
+                    {assignment.deviceName} ({assignment.host}:{assignment.port})
+                  </div>
+                ))}
+              </dd>
+            </div>
+          </dl>
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={() => setViewUser(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(assignUser)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setAssignUser(null);
+            setSelectedDeviceId("");
+            setRemoveTarget(null);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Devices for {assignUser?.username}</DialogTitle>
+            <DialogDescription>
+              Assign this person to one or more devices. Each assignment is
+              also added on that COSEC device.
+            </DialogDescription>
+          </DialogHeader>
+          {assignmentsQuery.isLoading ? (
+            <p className="text-sm text-muted-foreground">Loading assignments…</p>
+          ) : null}
+          {assignmentsQuery.isError ? (
+            <p className="text-sm text-destructive">
+              {asErrorMessage(assignmentsQuery.error)}
+            </p>
+          ) : null}
+          {!assignmentsQuery.isLoading &&
+          (assignmentsQuery.data?.length ?? 0) === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Not assigned to any device yet.
+            </p>
+          ) : null}
+          {(assignmentsQuery.data ?? []).length > 0 ? (
+            <ul className="grid gap-2 text-sm">
+              {(assignmentsQuery.data ?? []).map((assignment) => (
+                <li
+                  key={assignment.id}
+                  className="flex items-center justify-between gap-2"
+                >
+                  <span>
+                    {assignment.deviceName} ({assignment.host}:{assignment.port})
+                  </span>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    disabled={removeUserDevice.isPending}
+                    onClick={() => setRemoveTarget(assignment)}
+                  >
+                    Remove
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <div className="grid gap-2">
+            <Label htmlFor="assign-device">Add device</Label>
+            <Select
+              value={selectedDeviceId || undefined}
+              onValueChange={setSelectedDeviceId}
+            >
+              <SelectTrigger id="assign-device" aria-label="Device to assign">
+                <SelectValue placeholder="Select a device" />
+              </SelectTrigger>
+              <SelectContent>
+                {availableDevices.map((device) => (
+                  <SelectItem key={device.id} value={device.id}>
+                    {device.deviceName} ({device.host}:{device.port})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {availableDevices.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                Every registered device is already assigned, or no devices exist
+                yet.
+              </p>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setAssignUser(null)}
+            >
+              Close
+            </Button>
+            <Button
+              type="button"
+              disabled={!selectedDeviceId || assignUserDevice.isPending}
+              onClick={() => void onAssignDevice()}
+            >
+              {assignUserDevice.isPending || syncUsers.isPending
+                ? "Working…"
+                : "Assign and sync"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(removeTarget)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRemoveTarget(null);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove device assignment?</DialogTitle>
+            <DialogDescription>
+              This removes{" "}
+              <strong>{removeTarget?.deviceName}</strong> from{" "}
+              <strong>{assignUser?.username}</strong> in the local database.
+              The user and the device stay. It does not delete the person from
+              the Matrix device. You can assign them again later.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setRemoveTarget(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={removeUserDevice.isPending}
+              onClick={() => void onConfirmRemoveDevice()}
+            >
+              {removeUserDevice.isPending ? "Working…" : "Remove assignment"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(editUser)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditUser(null);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit username</DialogTitle>
+            <DialogDescription>
+              Changes the username only. Use Activate or Deactivate to change
+              status.
+            </DialogDescription>
+          </DialogHeader>
+          <form className="grid gap-3" onSubmit={editForm.handleSubmit(onEdit)}>
             <div className="grid gap-1.5">
-              <Label htmlFor="rename-user-name">Name</Label>
+              <Label htmlFor="edit-user-username">Username</Label>
               <Input
-                id="rename-user-name"
+                id="edit-user-username"
                 autoComplete="off"
                 maxLength={200}
-                {...renameForm.register("name")}
+                {...editForm.register("username")}
               />
-              {renameForm.formState.errors.name ? (
+              {editForm.formState.errors.username ? (
                 <p className="text-xs text-destructive">
-                  {renameForm.formState.errors.name.message}
+                  {editForm.formState.errors.username.message}
                 </p>
               ) : null}
             </div>
@@ -394,7 +766,7 @@ export function UsersPage({ enabled }: UsersPageProps) {
               <Button
                 type="button"
                 variant="secondary"
-                onClick={() => setRenameUser(null)}
+                onClick={() => setEditUser(null)}
               >
                 Cancel
               </Button>
@@ -403,6 +775,42 @@ export function UsersPage({ enabled }: UsersPageProps) {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(activateTarget)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setActivateTarget(null);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Activate user?</DialogTitle>
+            <DialogDescription>
+              This marks <strong>{activateTarget?.username}</strong> as active
+              in the local database. It does not create the user on a Matrix
+              device.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setActivateTarget(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={activateUser.isPending}
+              onClick={() => void onConfirmActivate()}
+            >
+              {activateUser.isPending ? "Working…" : "Activate user"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -418,10 +826,10 @@ export function UsersPage({ enabled }: UsersPageProps) {
           <DialogHeader>
             <DialogTitle>Deactivate user?</DialogTitle>
             <DialogDescription>
-              This marks{" "}
-              <strong>{deactivateTarget?.name}</strong> as inactive in the local
-              system of record. The record is kept; it is not deleted. You can
-              rename inactive users later.
+              This marks <strong>{deactivateTarget?.username}</strong> as
+              inactive in the local database. The record is kept. It does not
+              delete the user from a Matrix device. You can activate them again
+              later.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -439,6 +847,44 @@ export function UsersPage({ enabled }: UsersPageProps) {
               onClick={() => void onConfirmDeactivate()}
             >
               {deactivateUser.isPending ? "Working…" : "Deactivate user"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(deleteTarget)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteTarget(null);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete user?</DialogTitle>
+            <DialogDescription>
+              This removes <strong>{deleteTarget?.username}</strong> from Vsmart
+              Sync and from every Matrix device that already has this user,
+              including their enrollments. If a device cannot be reached, the
+              user is kept.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setDeleteTarget(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={deleteUser.isPending}
+              onClick={() => void onConfirmDelete()}
+            >
+              {deleteUser.isPending ? "Deleting…" : "Delete user"}
             </Button>
           </DialogFooter>
         </DialogContent>

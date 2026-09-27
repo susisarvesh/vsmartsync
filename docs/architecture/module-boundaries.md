@@ -1,6 +1,6 @@
 # Modules
 
-**Status:** Module **folders exist** under `src-tauri/src/`. Domain services live in `src-tauri/src/domains/`. **IMPLEMENTED:** `common` (app info, secret vault), `database` (users+devices+credentials+enrollments+device_users), `commands` (foundation, users, devices, credentials, enrollments), `domains/users`, `domains/devices`, `domains/credentials`, `domains/enrollments`, `domains/device_users`, `matrix` (Client foundation + probe + Adapter `set_user`/`set_pin`). Other domains are **PLANNED**. `set_card` / Sync deferred.
+**Status:** Module **folders exist** under `src-tauri/src/`. Domain services live in `src-tauri/src/domains/`. **IMPLEMENTED:** `common` (app info, secret vault), `database` (users+devices+credentials+enrollments+device_users), `commands` (foundation, users, devices, credentials, enrollments), `domains/users`, `domains/devices`, `domains/credentials`, `domains/enrollments`, `domains/device_users`, `domains/synchronization` (add assigned users on a device), `matrix` (Client foundation + probe + Adapter `set_user`/`set_pin`). Other domains are **PLANNED**. `set_card`, credential sync, and durable sync jobs remain later.
 
 Each domain is a module in **one** Rust crate. That is a modular monolith, not microservices.
 
@@ -33,11 +33,11 @@ Domain services live under `src-tauri/src/domains/` (`crate::domains::users`, an
 | | |
 |---|---|
 | **Responsibility** | Application user records (people who get access). |
-| **Owns** | Create, list, rename, deactivate (`active` / `inactive`). |
+| **Owns** | Create, list, update `username`, activate, deactivate (`active` / `inactive`). |
 | **Must not own** | HTTP to `/device.cgi/users`; credential templates; Matrix `user-id` mapping. |
 | **Depends on** | `database` user repository. |
 
-**IMPLEMENTED** for this slice. Deactivate is a domain operation; the UI cannot set status via update. No Matrix CGI from this module. Matrix identity mapping lives in `device_users` (ADR-013).
+**IMPLEMENTED** for the local user record in [matrix-vsmart-current-flow.md](../matrix-vsmart-current-flow.md) section 5. New users start `active`. Activate and deactivate are domain operations; update changes `username` only. No Matrix CGI from this module. Assignment to many devices is `user_devices` (section 4.3), not a `device_id` on the user. Matrix identity mapping stays in `device_users` (ADR-013) and is not created by assignment.
 
 ---
 
@@ -46,13 +46,13 @@ Domain services live under `src-tauri/src/domains/` (`crate::domains::users`, an
 | | |
 |---|---|
 | **Responsibility** | Registered COSEC devices and how this app reaches them. |
-| **Owns** | Address, port, display name, encrypted device password (Rust-side), `connection_status` / `last_seen_at` as **application reachability** data. |
+| **Owns** | `device_name`, host, port, optional `mac_address`, optional `device_model`, software `status` (`active` / `inactive`), encrypted device password (Rust-side), device login username, and `connection_status` / `last_seen_at` as reachability. |
 | **Must not own** | CGI client implementation beyond calling `matrix` abstractions; event ingest; enrollment; sync. |
 | **Depends on** | `database` device repository, `common` password vault; reachability via `matrix` adapter. |
 
 Never return device passwords or ciphertext to Tauri/React.
 
-**IMPLEMENTED** for this slice: create, list, update metadata, set password, test connection (`GET /device.cgi/device-basic-config?action=get`). `connection_status` is application reachability only (`unknown` / `online` / `offline`), not physical device health.
+**IMPLEMENTED** for the local device record in [matrix-vsmart-current-flow.md](../matrix-vsmart-current-flow.md) section 6. Create, list, view, update metadata, set password, activate, deactivate, and test connection (`GET /device.cgi/device-basic-config?action=get`). New devices start `active` with `connection_status=unknown` and `device_model` empty. `device_model` is reserved for a later configuration-discovery step (`reader-config`, `enroll-options`); those calls are not made from this slice. `connection_status` is application reachability only (`unknown` / `online` / `offline`). Password ciphertext never leaves Rust.
 
 ---
 
@@ -63,7 +63,7 @@ Never return device passwords or ciphertext to Tauri/React.
 | **Responsibility** | Credential records and provisioning data for users. |
 | **Owns** | Types `card` and `pin` for this slice; encrypt-at-rest; activate/deactivate. |
 | **Must not own** | Live enrollment sessions; Matrix HTTP; biometric templates. |
-| **Depends on** | `users`, `database`, shared `SecretVault` (same keychain master key as device passwords). |
+| **Depends on** | `users`, `database`, shared `SecretVault` (same application master key as device passwords). |
 
 Never return plaintext values, ciphertext, or digests to Tauri/React. PIN responses expose no value (UI: Configured). Cards may expose a last-4 mask only.
 
@@ -77,7 +77,7 @@ Never return plaintext values, ciphertext, or digests to Tauri/React. PIN respon
 |---|---|
 | **Responsibility** | Durable desired assignment of a user credential to a device. |
 | **Owns** | Create/list/get; lifecycle `pending`/`active`/`failed`/`cancelled`/`revoked`; cancel/retry/revoke. |
-| **Must not own** | Matrix HTTP; sync jobs/attempts; physical `enrolluser` sessions; credential storage. |
+| **Must not own** | Matrix CGI URL construction; sync jobs/attempts; biometric template storage. Hardware enrollment calls the Matrix adapter. |
 | **Depends on** | `users`, `devices`, `credentials`, `database`. |
 
 Device online status is not required to create a pending assignment. Sync (future) applies desired state to Matrix.
@@ -95,7 +95,7 @@ Device online status is not required to create a pending assignment. Sync (futur
 | **Must not own** | Matrix HTTP; Sync jobs; React UI (none in v1); enrollment lifecycle. |
 | **Depends on** | `users`, `devices`, `database` (`device_users`, `device_id_sequences`). |
 
-Allocation ≠ provisioned. Sync (future) calls Matrix `set_user` then `mark_provisioned`. See ADR-013.
+Allocation ≠ provisioned. User sync calls `ensure_mapping`, then Matrix `set_user`, then `mark_provisioned`. See ADR-013.
 
 **IMPLEMENTED** for this slice. No Tauri commands / UI.
 
@@ -105,12 +105,12 @@ Allocation ≠ provisioned. Sync (future) calls Matrix `set_user` then `mark_pro
 
 | | |
 |---|---|
-| **Responsibility** | Turn desired PostgreSQL state into per-device jobs and run them. |
-| **Owns** | Planner, job state machine, retry/backoff policy, per-device concurrency. |
-| **Must not own** | CGI details; UI rendering. |
-| **Depends on** | All domain repositories it must push; `matrix` adapter; `audit`. |
+| **Responsibility** | Turn desired PostgreSQL state into device commands. |
+| **Owns** | Push of assigned users onto a device (`set_user`). |
+| **Must not own** | CGI URL construction; UI rendering; credential or delete sync. |
+| **Depends on** | `users`, `devices`, `user_devices`, `device_users`, password vault, `matrix` adapter. |
 
-There is no Matrix “sync module.” This module **is** the sync system. See [synchronization.md](../synchronization.md).
+**IMPLEMENTED** for adding assigned users. Durable `sync_jobs`, credential push, and user delete on the device remain later. See [synchronization.md](../synchronization.md).
 
 ---
 

@@ -30,6 +30,7 @@ impl DatabaseError {
                     || db.constraint() == Some("device_users_user_device_unique")
                     || db.constraint() == Some("device_users_device_matrix_user_unique")
                     || db.constraint() == Some("device_users_device_matrix_ref_unique")
+                    || db.constraint() == Some("user_devices_pair_unique")
             }
             _ => false,
         }

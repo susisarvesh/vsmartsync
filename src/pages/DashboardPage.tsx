@@ -2,7 +2,7 @@ import {
   ChevronRight,
   CreditCard,
   HardDrive,
-  Link2,
+  UserPlus,
   Users,
 } from "lucide-react";
 import { DatabaseStatusControl } from "@/components/DatabaseStatusControl";
@@ -34,6 +34,12 @@ const MODULES: Array<{
     icon: Users,
   },
   {
+    id: "assign-device",
+    label: "Assign to device",
+    description: "Choose a device, then assign users to it",
+    icon: UserPlus,
+  },
+  {
     id: "devices",
     label: "Devices",
     description: "Matrix COSEC doors and controllers",
@@ -42,14 +48,8 @@ const MODULES: Array<{
   {
     id: "credentials",
     label: "Credentials",
-    description: "Card and PIN records for users",
+    description: "User credentials, enrolled on a device",
     icon: CreditCard,
-  },
-  {
-    id: "enrollments",
-    label: "Enrollments",
-    description: "Desired credential-to-device assignments",
-    icon: Link2,
   },
 ];
 
@@ -83,8 +83,8 @@ export function DashboardPage({
               Database
             </h3>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Local PostgreSQL required for Users, Devices, Credentials, and
-              Enrollments.
+              Local PostgreSQL required for Users, Assign to device, Devices,
+              Credentials, and Enrollments.
             </p>
             {database?.connected ? (
               <p className="mt-2 font-mono text-xs text-muted-foreground">

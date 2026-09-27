@@ -8,43 +8,61 @@
 |---|---|---|
 | Database | PostgreSQL 16+ (local install, not Docker) | **IMPLEMENTED** |
 | Access | SQLx (Rust), runtime Tokio, rustls | **IMPLEMENTED** |
-| Migrations | SQLx files in repository-root `migrations/` | **IMPLEMENTED** (`0001`–`0005`) |
+| Migrations | SQLx files in repository-root `migrations/` | **IMPLEMENTED** (`0001`–`0008`) |
 | Dev host port | **5432** | **IMPLEMENTED** |
 
 There is no migrate-only npm script. The app runs `connect_and_migrate` at startup. Live check: `cargo test --manifest-path src-tauri/Cargo.toml -- --ignored`.
 
 ## Users table (IMPLEMENTED)
 
-Migration `migrations/0001_create_users.sql`. UUID is the only unique key. Do not add Matrix or credential columns here.
+Migrations `migrations/0001_create_users.sql` and `migrations/0006_rename_users_name_to_username.sql`. UUID is the only unique key. Do not add Matrix or credential columns here. The current-flow field is `username` (the person’s name, not a login). Stored status values stay lowercase `active` / `inactive`; the UI labels them Active and Inactive.
 
 | Column | Type | Rules |
 |---|---|---|
 | `id` | UUID | PRIMARY KEY |
-| `name` | TEXT | NOT NULL, trimmed non-empty, max 200 chars |
+| `username` | TEXT | NOT NULL, trimmed non-empty, max 200 chars |
 | `status` | TEXT | NOT NULL, `active` or `inactive` only |
 | `created_at` | TIMESTAMPTZ | NOT NULL |
 | `updated_at` | TIMESTAMPTZ | NOT NULL |
 
-No unique constraint on `name`. No `matrix_user_id`, `employee_code`, `card_number`, `device_id`, or biometric columns.
+No unique constraint on `username`. No `matrix_user_id`, `employee_code`, `card_number`, `device_id`, or biometric columns. New rows start `active`. A user is linked to devices through `user_devices`, not a column on this row.
 
 ## Devices table (IMPLEMENTED)
 
-Migration `migrations/0002_create_devices.sql`. Unique on `(host, port)`. Password is stored only as ciphertext (see ADR-009).
+Migrations `migrations/0002_create_devices.sql` and `migrations/0007_align_device_entity.sql`. Unique on `(host, port)`. Password is stored only as ciphertext (see ADR-009). `username` is the device login from the authentication step; it is not part of the display example, and the password is never returned.
+
+`status` is the software record (`active` / `inactive`), default `active`. `connection_status` is reachability from the connection test. They stay separate so availability checks do not overwrite whether the administrator has deactivated the device. `device_model` is nullable until configuration discovery can fill it. The current flow says the guide has no dedicated hardware-model API, so this slice does not invent one. `mac_address` is optional and stored only as `AA:BB:CC:DD:EE:FF`. The operator enters it. Automatic lookup is not implemented.
 
 | Column | Type | Rules |
 |---|---|---|
 | `id` | UUID | PRIMARY KEY |
-| `name` | TEXT | NOT NULL, trimmed non-empty, max 200 chars |
+| `device_name` | TEXT | NOT NULL, trimmed non-empty, max 200 chars |
 | `host` | TEXT | NOT NULL, hostname or IPv4 only (validated in Rust) |
 | `port` | INTEGER | NOT NULL, 1–65535, default 80 |
+| `mac_address` | TEXT | NULL, or canonical uppercase MAC |
+| `device_model` | TEXT | NULL until discovery; max 100 chars when set |
 | `username` | TEXT | NOT NULL, non-empty, max 100 chars |
 | `password_ciphertext` | BYTEA | NOT NULL, AES-256-GCM blob; never returned to React |
+| `status` | TEXT | NOT NULL, `active` or `inactive`, default `active` |
 | `connection_status` | TEXT | NOT NULL, `unknown` / `online` / `offline` (app reachability) |
 | `last_seen_at` | TIMESTAMPTZ | NULL; set only on successful connection test |
 | `created_at` | TIMESTAMPTZ | NOT NULL |
 | `updated_at` | TIMESTAMPTZ | NOT NULL |
 
-Do not add enrollment, sync, biometric, Matrix user-id, licensing, or event columns here.
+Do not add enrollment, sync, biometric, Matrix user-id, licensing, event, or an unstructured capability-profile column here. Reader configuration and enrollment options are later Matrix calls, not extra columns on this row.
+
+## User–device assignment (IMPLEMENTED)
+
+Migration `migrations/0008_create_user_devices.sql`. One user, many devices. This is the local assignment from the current flow. It does not allocate Matrix ids and does not call the device. Matrix identity remains `device_users` (ADR-013).
+
+| Column | Type | Rules |
+|---|---|---|
+| `id` | UUID | PRIMARY KEY |
+| `user_id` | UUID | NOT NULL, FK → `users(id)` RESTRICT |
+| `device_id` | UUID | NOT NULL, FK → `devices(id)` RESTRICT |
+| `created_at` | TIMESTAMPTZ | NOT NULL |
+
+Unique pair `(user_id, device_id)`. Index on `device_id`.
 
 ## Credentials table (IMPLEMENTED)
 

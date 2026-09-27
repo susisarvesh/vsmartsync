@@ -1,18 +1,20 @@
 //! Shared secret encryption (AES-256-GCM).
 //!
-//! One OS-keychain master key protects device passwords and user credential
-//! secrets (card numbers, PINs). Ciphertext lives in PostgreSQL. Plaintext
-//! never goes to React or logs.
+//! One application master key protects device passwords and user credential
+//! secrets (card numbers, PINs). Ciphertext lives in PostgreSQL. The key is a
+//! file the app creates. Plaintext never goes to React or logs.
+
+use std::fs::{self, File, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
-use keyring::Entry;
 use rand::RngCore;
 use thiserror::Error;
 
-const SERVICE: &str = "com.vsmart.sync";
-/// Single workstation master key for all reversible app secrets at rest.
-const ACCOUNT: &str = "device-password-master-key";
+const KEY_DIR_NAME: &str = ".vsmart-sync";
+const KEY_FILE_NAME: &str = "master.key";
 const NONCE_LEN: usize = 12;
 const KEY_LEN: usize = 32;
 
@@ -24,7 +26,7 @@ pub enum SecretError {
     Corrupt,
 }
 
-/// AES-256-GCM vault backed by the OS credential store.
+/// AES-256-GCM vault. The master key is not stored in an OS credential store.
 pub struct SecretVault {
     cipher: Aes256Gcm,
 }
@@ -34,7 +36,11 @@ pub type DevicePasswordVault = SecretVault;
 
 impl SecretVault {
     pub fn open() -> Result<Self, SecretError> {
-        let key = load_or_create_key()?;
+        Self::open_in(&default_key_dir()?)
+    }
+
+    pub fn open_in(dir: &Path) -> Result<Self, SecretError> {
+        let key = load_or_create_key(dir)?;
         Self::from_key(key)
     }
 
@@ -71,42 +77,104 @@ impl SecretVault {
     }
 }
 
-fn load_or_create_key() -> Result<[u8; KEY_LEN], SecretError> {
-    let entry = Entry::new(SERVICE, ACCOUNT).map_err(|_| SecretError::Unavailable)?;
-    match entry.get_password() {
-        Ok(encoded) => decode_key(&encoded),
-        Err(keyring::Error::NoEntry) => {
-            let mut key = [0u8; KEY_LEN];
-            rand::thread_rng().fill_bytes(&mut key);
-            let encoded = encode_key(&key);
-            entry
-                .set_password(&encoded)
-                .map_err(|_| SecretError::Unavailable)?;
-            Ok(key)
-        }
-        Err(_) => Err(SecretError::Unavailable),
+fn default_key_dir() -> Result<PathBuf, SecretError> {
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .ok_or(SecretError::Unavailable)?;
+    Ok(PathBuf::from(home).join(KEY_DIR_NAME))
+}
+
+fn load_or_create_key(dir: &Path) -> Result<[u8; KEY_LEN], SecretError> {
+    fs::create_dir_all(dir).map_err(|_| SecretError::Unavailable)?;
+    restrict_directory(dir)?;
+    let path = dir.join(KEY_FILE_NAME);
+    if path.exists() {
+        return read_key(&path);
+    }
+
+    let mut key = [0u8; KEY_LEN];
+    rand::thread_rng().fill_bytes(&mut key);
+    match create_key_file(&path, &key) {
+        Ok(()) => Ok(key),
+        Err(CreateKeyError::AlreadyExists) => read_key(&path),
+        Err(CreateKeyError::Unavailable) => Err(SecretError::Unavailable),
     }
 }
 
-fn encode_key(key: &[u8; KEY_LEN]) -> String {
-    key.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-fn decode_key(encoded: &str) -> Result<[u8; KEY_LEN], SecretError> {
-    if encoded.len() != KEY_LEN * 2 {
-        return Err(SecretError::Corrupt);
+fn read_key(path: &Path) -> Result<[u8; KEY_LEN], SecretError> {
+    let bytes = fs::read(path).map_err(|_| SecretError::Unavailable)?;
+    if bytes.len() != KEY_LEN {
+        return Err(if bytes.is_empty() {
+            SecretError::Unavailable
+        } else {
+            SecretError::Corrupt
+        });
     }
     let mut key = [0u8; KEY_LEN];
-    for (index, chunk) in encoded.as_bytes().chunks(2).enumerate() {
-        let hex = std::str::from_utf8(chunk).map_err(|_| SecretError::Corrupt)?;
-        key[index] = u8::from_str_radix(hex, 16).map_err(|_| SecretError::Corrupt)?;
-    }
+    key.copy_from_slice(&bytes);
     Ok(key)
+}
+
+enum CreateKeyError {
+    AlreadyExists,
+    Unavailable,
+}
+
+fn create_key_file(path: &Path, key: &[u8; KEY_LEN]) -> Result<(), CreateKeyError> {
+    let mut file = open_new_key_file(path)?;
+    if file.write_all(key).and_then(|_| file.sync_all()).is_err() {
+        let _ = fs::remove_file(path);
+        return Err(CreateKeyError::Unavailable);
+    }
+    Ok(())
+}
+
+fn open_new_key_file(path: &Path) -> Result<File, CreateKeyError> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    match options.open(path) {
+        Ok(file) => Ok(file),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(CreateKeyError::AlreadyExists)
+        }
+        Err(_) => Err(CreateKeyError::Unavailable),
+    }
+}
+
+fn restrict_directory(dir: &Path) -> Result<(), SecretError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
+            .map_err(|_| SecretError::Unavailable)?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_key, encode_key, SecretVault, KEY_LEN};
+    use super::{SecretError, SecretVault, KEY_FILE_NAME, KEY_LEN};
+    use rand::RngCore;
+    use std::fs;
+
+    fn temp_dir() -> std::path::PathBuf {
+        let mut nonce = [0u8; 8];
+        rand::thread_rng().fill_bytes(&mut nonce);
+        let name = nonce
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        std::env::temp_dir().join(format!("vsmart-vault-{name}"))
+    }
 
     #[test]
     fn round_trips_password_without_logging_plaintext_in_blob() {
@@ -124,8 +192,30 @@ mod tests {
     }
 
     #[test]
-    fn key_hex_round_trip() {
-        let key = [9u8; KEY_LEN];
-        assert_eq!(decode_key(&encode_key(&key)).unwrap(), key);
+    fn same_directory_reuses_one_master_key() {
+        let dir = temp_dir();
+        let first = SecretVault::open_in(&dir).expect("create");
+        let blob = first.encrypt("door-secret").expect("encrypt");
+        let second = SecretVault::open_in(&dir).expect("reopen");
+        assert_eq!(second.decrypt(&blob).expect("decrypt"), "door-secret");
+        let stored = fs::read(dir.join(KEY_FILE_NAME)).expect("key file");
+        assert_eq!(stored.len(), KEY_LEN);
+        assert!(!String::from_utf8_lossy(&stored).contains("door-secret"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn corrupt_key_file_is_not_replaced() {
+        let dir = temp_dir();
+        fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join(KEY_FILE_NAME);
+        fs::write(&path, b"not-a-key").expect("write");
+        match SecretVault::open_in(&dir) {
+            Err(SecretError::Corrupt) => {}
+            Err(error) => panic!("expected corrupt key, got {error}"),
+            Ok(_) => panic!("expected corrupt key"),
+        }
+        assert_eq!(fs::read(&path).expect("still there"), b"not-a-key");
+        let _ = fs::remove_dir_all(&dir);
     }
 }

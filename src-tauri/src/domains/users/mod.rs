@@ -1,8 +1,9 @@
 //! Users domain.
 //!
-//! Owns application people records: create, list, update name, deactivate.
-//! Does not own Matrix `user-id`, credentials, devices, enrollment, or sync.
+//! Owns application people records: create, list, update username, activate, deactivate,
+//! and delete. Delete also removes the person from each Matrix device that has them.
 
+mod removal;
 mod service;
 
 use chrono::{DateTime, Utc};
@@ -10,9 +11,10 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
-pub use service::{create_user, deactivate_user, list_users, update_user_name};
+pub use removal::delete_user;
+pub use service::{activate_user, create_user, deactivate_user, list_users, update_user};
 
-pub const MAX_USER_NAME_LENGTH: usize = 200;
+pub const MAX_USERNAME_LENGTH: usize = 200;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,7 +44,7 @@ impl UserStatus {
 #[serde(rename_all = "camelCase")]
 pub struct User {
     pub id: Uuid,
-    pub name: String,
+    pub username: String,
     pub status: UserStatus,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -50,36 +52,64 @@ pub struct User {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum UserError {
-    #[error("USER_INVALID_NAME")]
-    InvalidName,
+    #[error("USER_INVALID_USERNAME")]
+    InvalidUsername,
     #[error("USER_NOT_FOUND")]
     NotFound,
     #[error("DATABASE_UNAVAILABLE")]
     Unavailable,
+    #[error("DEVICE_SECRET_UNAVAILABLE")]
+    SecretUnavailable,
+    #[error("DEVICE_SECRET_CORRUPT")]
+    SecretCorrupt,
+    #[error("DEVICE_AUTH_FAILED")]
+    AuthFailed,
+    #[error("DEVICE_BAD_RESPONSE")]
+    BadResponse,
+    #[error("MATRIX_TIMEOUT")]
+    Timeout,
+    #[error("MATRIX_UNREACHABLE")]
+    Unreachable,
+    #[error("MATRIX_INVALID_ARGUMENT")]
+    InvalidArgument,
+    #[error("MATRIX_API_ERROR:{code}")]
+    ApiError { code: i32 },
 }
 
-pub fn normalize_name(name: &str) -> Result<String, UserError> {
-    let name = name.trim();
-    if name.is_empty() || name.chars().count() > MAX_USER_NAME_LENGTH {
-        return Err(UserError::InvalidName);
+pub fn normalize_username(username: &str) -> Result<String, UserError> {
+    let username = username.trim();
+    if username.is_empty() || username.chars().count() > MAX_USERNAME_LENGTH {
+        return Err(UserError::InvalidUsername);
     }
-    Ok(name.to_string())
+    Ok(username.to_string())
 }
 
-pub fn new_user(name: &str, id: Uuid, now: DateTime<Utc>) -> Result<User, UserError> {
+pub fn new_user(username: &str, id: Uuid, now: DateTime<Utc>) -> Result<User, UserError> {
     Ok(User {
         id,
-        name: normalize_name(name)?,
+        username: normalize_username(username)?,
         status: UserStatus::Active,
         created_at: now,
         updated_at: now,
     })
 }
 
-pub fn rename_user(mut user: User, name: &str, now: DateTime<Utc>) -> Result<User, UserError> {
-    user.name = normalize_name(name)?;
+pub fn update_username(
+    mut user: User,
+    username: &str,
+    now: DateTime<Utc>,
+) -> Result<User, UserError> {
+    user.username = normalize_username(username)?;
     user.updated_at = now;
     Ok(user)
+}
+
+pub fn activate(mut user: User, now: DateTime<Utc>) -> User {
+    if user.status != UserStatus::Active {
+        user.status = UserStatus::Active;
+        user.updated_at = now;
+    }
+    user
 }
 
 pub fn deactivate(mut user: User, now: DateTime<Utc>) -> User {
@@ -92,7 +122,9 @@ pub fn deactivate(mut user: User, now: DateTime<Utc>) -> User {
 
 #[cfg(test)]
 mod tests {
-    use super::{deactivate, new_user, normalize_name, rename_user, UserError, UserStatus};
+    use super::{
+        activate, deactivate, new_user, normalize_username, update_username, UserError, UserStatus,
+    };
     use chrono::{TimeZone, Utc};
     use uuid::Uuid;
 
@@ -101,41 +133,58 @@ mod tests {
     }
 
     #[test]
-    fn normalize_name_trims_and_rejects_blank() {
-        assert_eq!(normalize_name("  Ada  ").unwrap(), "Ada");
-        assert_eq!(normalize_name("   ").unwrap_err(), UserError::InvalidName);
-        assert_eq!(normalize_name("").unwrap_err(), UserError::InvalidName);
+    fn normalize_username_trims_and_rejects_blank() {
+        assert_eq!(normalize_username("  Ada  ").unwrap(), "Ada");
+        assert_eq!(
+            normalize_username("   ").unwrap_err(),
+            UserError::InvalidUsername
+        );
+        assert_eq!(
+            normalize_username("").unwrap_err(),
+            UserError::InvalidUsername
+        );
     }
 
     #[test]
-    fn normalize_name_rejects_too_long() {
-        let name = "a".repeat(201);
-        assert_eq!(normalize_name(&name).unwrap_err(), UserError::InvalidName);
-        assert!(normalize_name(&"a".repeat(200)).is_ok());
+    fn normalize_username_rejects_too_long() {
+        let username = "a".repeat(201);
+        assert_eq!(
+            normalize_username(&username).unwrap_err(),
+            UserError::InvalidUsername
+        );
+        assert!(normalize_username(&"a".repeat(200)).is_ok());
     }
 
     #[test]
     fn new_user_starts_active() {
         let user = new_user("Ada", Uuid::nil(), now()).expect("user");
         assert_eq!(user.status, UserStatus::Active);
-        assert_eq!(user.name, "Ada");
+        assert_eq!(user.username, "Ada");
     }
 
     #[test]
-    fn rename_user_does_not_change_status() {
+    fn update_username_does_not_change_status() {
         let user = new_user("Ada", Uuid::nil(), now()).expect("user");
-        let renamed = rename_user(user, "Ada Lovelace", now()).expect("rename");
-        assert_eq!(renamed.name, "Ada Lovelace");
+        let renamed = update_username(user, "Ada Lovelace", now()).expect("rename");
+        assert_eq!(renamed.username, "Ada Lovelace");
         assert_eq!(renamed.status, UserStatus::Active);
     }
 
     #[test]
-    fn deactivate_sets_inactive_and_is_idempotent() {
+    fn activate_and_deactivate_are_idempotent() {
         let user = new_user("Ada", Uuid::nil(), now()).expect("user");
-        let first = deactivate(user, now());
-        assert_eq!(first.status, UserStatus::Inactive);
-        let second = deactivate(first.clone(), now());
-        assert_eq!(second, first);
+        let still_active = activate(user.clone(), now());
+        assert_eq!(still_active, user);
+
+        let inactive = deactivate(user, now());
+        assert_eq!(inactive.status, UserStatus::Inactive);
+        let still_inactive = deactivate(inactive.clone(), now());
+        assert_eq!(still_inactive, inactive);
+
+        let active = activate(inactive, now());
+        assert_eq!(active.status, UserStatus::Active);
+        let still_active = activate(active.clone(), now());
+        assert_eq!(still_active, active);
     }
 
     #[test]

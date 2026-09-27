@@ -1,7 +1,8 @@
 //! Enrollments domain.
 //!
-//! Durable desired assignment of a user credential to a device.
-//! Does not own Matrix CGI, sync jobs, physical enrolluser sessions, or secrets.
+//! Durable desired assignment of a user credential to a device, and hardware
+//! enrollment that checks device configuration before calling `enrolluser`.
+//! CGI paths stay in `matrix`. Biometric templates are not stored.
 
 mod service;
 
@@ -14,6 +15,10 @@ pub use service::{
     cancel_enrollment, create_enrollment, get_enrollment, list_enrollments, mark_enrollment_active,
     mark_enrollment_failed, retry_enrollment, revoke_enrollment, EnrollmentListFilter,
 };
+
+mod hardware;
+
+pub use hardware::{device_enrollment_options, enroll_on_device};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -72,6 +77,21 @@ pub struct Enrollment {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Enrollment types reported by the device configuration documents.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceEnrollmentOptions {
+    pub device_id: Uuid,
+    pub options: Vec<EnrollmentOption>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnrollmentOption {
+    pub enroll_type: String,
+    pub label: String,
+}
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum EnrollmentError {
     #[error("ENROLLMENT_NOT_FOUND")]
@@ -92,6 +112,34 @@ pub enum EnrollmentError {
     CredentialNotFound,
     #[error("DEVICE_NOT_FOUND")]
     DeviceNotFound,
+    #[error("DEVICE_INACTIVE")]
+    DeviceInactive,
+    #[error("USER_DEVICE_NOT_FOUND")]
+    UserNotAssigned,
+    #[error("ENROLLMENT_UNSUPPORTED")]
+    Unsupported,
+    #[error("ENROLLMENT_NOT_CAPTURED")]
+    NotCaptured,
+    #[error("ENROLLMENT_INVALID_TYPE")]
+    InvalidType,
+    #[error("DEVICE_SECRET_UNAVAILABLE")]
+    SecretUnavailable,
+    #[error("DEVICE_SECRET_CORRUPT")]
+    SecretCorrupt,
+    #[error("DEVICE_OFFLINE")]
+    Offline,
+    #[error("DEVICE_AUTH_FAILED")]
+    AuthFailed,
+    #[error("DEVICE_BAD_RESPONSE")]
+    BadResponse,
+    #[error("MATRIX_TIMEOUT")]
+    Timeout,
+    #[error("MATRIX_UNREACHABLE")]
+    Unreachable,
+    #[error("MATRIX_INVALID_ARGUMENT")]
+    InvalidArgument,
+    #[error("MATRIX_API_ERROR:{code}")]
+    ApiError { code: i32 },
     #[error("DATABASE_UNAVAILABLE")]
     Unavailable,
 }
