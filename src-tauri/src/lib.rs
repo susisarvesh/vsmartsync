@@ -35,6 +35,7 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             app.manage(database::DatabaseRuntime::initialize());
+            app.manage(domains::enrollments::DeviceEnrollmentGate::new());
 
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Regular);
@@ -76,7 +77,13 @@ pub fn run() {
             commands::revoke_enrollment,
             commands::retry_enrollment,
             commands::device_enrollment_options,
-            commands::enroll_on_device
+            commands::enroll_on_device,
+            commands::start_device_enrollment,
+            commands::get_device_enrollment_session,
+            commands::cancel_device_enrollment_session,
+            commands::read_card,
+            commands::get_card_reader_status,
+            commands::test_card
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

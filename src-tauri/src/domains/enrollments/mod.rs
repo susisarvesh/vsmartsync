@@ -4,21 +4,31 @@
 //! enrollment that checks device configuration before calling `enrolluser`.
 //! CGI paths stay in `matrix`. Biometric templates are not stored.
 
+mod gate;
 mod service;
+mod session;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
+pub use gate::{DeviceEnrollmentGate, DeviceEnrollmentGuard};
 pub use service::{
     cancel_enrollment, create_enrollment, get_enrollment, list_enrollments, mark_enrollment_active,
     mark_enrollment_failed, retry_enrollment, revoke_enrollment, EnrollmentListFilter,
 };
+pub use session::{
+    cancel_enrollment_session, get_enrollment_session, CardRead, CardReaderStatus, CardTestResult,
+    EnrollmentSession, EnrollmentSessionStatus,
+};
 
 mod hardware;
 
-pub use hardware::{device_enrollment_options, enroll_on_device};
+pub use hardware::{
+    card_reader_status, device_enrollment_options, enroll_on_device, execute_device_enrollment,
+    prepare_device_enrollment, read_card, test_card, PreparedEnrollment,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -82,6 +92,11 @@ pub struct Enrollment {
 #[serde(rename_all = "camelCase")]
 pub struct DeviceEnrollmentOptions {
     pub device_id: Uuid,
+    #[serde(default)]
+    pub reader_label: Option<String>,
+    /// Local credential `type` values that may be assigned to this device.
+    #[serde(default)]
+    pub assignable_credential_types: Vec<String>,
     pub options: Vec<EnrollmentOption>,
 }
 
@@ -120,6 +135,14 @@ pub enum EnrollmentError {
     Unsupported,
     #[error("ENROLLMENT_NOT_CAPTURED")]
     NotCaptured,
+    #[error("ENROLLMENT_DEVICE_BUSY")]
+    DeviceBusy,
+    #[error("ENROLLMENT_PERSISTENCE_FAILED")]
+    PersistenceFailed,
+    #[error("ENROLLMENT_SESSION_NOT_FOUND")]
+    SessionNotFound,
+    #[error("ENROLLMENT_CANCELLED")]
+    Cancelled,
     #[error("ENROLLMENT_INVALID_TYPE")]
     InvalidType,
     #[error("DEVICE_SECRET_UNAVAILABLE")]

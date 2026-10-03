@@ -36,6 +36,24 @@ pub const USER_CONFLICT: i32 = 37;
 /// Enroll conflict.
 pub const ENROLL_CONFLICT: i32 = 38;
 
+/// Reader is busy (guide: another menu, and card-read-write Device Busy).
+pub const DEVICE_BUSY: i32 = 16;
+
+/// card-read-write: parameters are not applicable for this card type.
+pub const CARD_PARAMETERS_NOT_APPLICABLE: i32 = 26;
+
+/// card-read-write: the reader timed out.
+pub const CARD_READ_TIMEOUT: i32 = 27;
+
+/// card-read-write: read or write failed.
+pub const CARD_READ_WRITE_FAILED: i32 = 28;
+
+/// card-read-write: the presented card is the wrong type.
+pub const WRONG_CARD_TYPE: i32 = 29;
+
+/// card-read-write: key mismatch.
+pub const CARD_KEY_MISMATCH: i32 = 30;
+
 /// Stable snake_case label for known guide codes; `None` if not in this catalog.
 pub fn documented_label(code: i32) -> Option<&'static str> {
     match code {
@@ -50,6 +68,12 @@ pub fn documented_label(code: i32) -> Option<&'static str> {
         FACE_NOT_DETECTED => Some("face_not_detected"),
         USER_CONFLICT => Some("user_conflict"),
         ENROLL_CONFLICT => Some("enroll_conflict"),
+        DEVICE_BUSY => Some("device_busy"),
+        CARD_PARAMETERS_NOT_APPLICABLE => Some("card_parameters_not_applicable"),
+        CARD_READ_TIMEOUT => Some("card_read_timeout"),
+        CARD_READ_WRITE_FAILED => Some("card_read_write_failed"),
+        WRONG_CARD_TYPE => Some("wrong_card_type"),
+        CARD_KEY_MISMATCH => Some("card_key_mismatch"),
         _ => None,
     }
 }
@@ -71,6 +95,14 @@ mod tests {
         assert_eq!(FACE_NOT_DETECTED, 36);
         assert_eq!(USER_CONFLICT, 37);
         assert_eq!(ENROLL_CONFLICT, 38);
+        assert_eq!(DEVICE_BUSY, 16);
+        assert_eq!(CARD_PARAMETERS_NOT_APPLICABLE, 26);
+        assert_eq!(CARD_READ_TIMEOUT, 27);
+        assert_eq!(CARD_READ_WRITE_FAILED, 28);
+        assert_eq!(WRONG_CARD_TYPE, 29);
+        assert_eq!(CARD_KEY_MISMATCH, 30);
+        assert_eq!(documented_label(WRONG_CARD_TYPE), Some("wrong_card_type"));
+        assert_eq!(documented_label(99), None);
     }
 
     #[test]

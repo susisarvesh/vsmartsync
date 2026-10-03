@@ -27,6 +27,7 @@ impl DatabaseError {
                     || db.constraint() == Some("credentials_card_value_digest_unique")
                     || db.constraint() == Some("credentials_one_pin_per_user")
                     || db.constraint() == Some("enrollments_open_credential_device_unique")
+                    || db.constraint() == Some("enrollments_active_card_identifier_unique")
                     || db.constraint() == Some("device_users_user_device_unique")
                     || db.constraint() == Some("device_users_device_matrix_user_unique")
                     || db.constraint() == Some("device_users_device_matrix_ref_unique")

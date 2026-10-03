@@ -13,6 +13,7 @@ use super::{
     DeviceStatus, DEFAULT_DEVICE_PORT,
 };
 
+#[allow(clippy::too_many_arguments)]
 pub async fn create_device(
     repo: &DeviceRepository,
     vault: &DevicePasswordVault,

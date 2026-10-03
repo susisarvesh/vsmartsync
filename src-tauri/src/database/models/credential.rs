@@ -11,6 +11,8 @@ pub struct CredentialWriteRecord {
     pub value_ciphertext: Vec<u8>,
     pub value_digest: Vec<u8>,
     pub display_hint: Option<String>,
+    pub card_type: Option<String>,
+    pub identifier_type: Option<String>,
     pub status: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -25,6 +27,8 @@ pub struct CredentialRecord {
     #[sqlx(rename = "type")]
     pub credential_type: String,
     pub display_hint: Option<String>,
+    pub card_type: Option<String>,
+    pub identifier_type: Option<String>,
     pub status: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

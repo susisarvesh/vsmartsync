@@ -11,8 +11,9 @@ use thiserror::Error;
 
 use crate::matrix::client::{MatrixClientError, MatrixHttpClient};
 use crate::matrix::enrollment::{
-    config_field, credential_counts, face_only_door, supported_enroll_types, CredentialCounts,
-    HardwareEnrollType,
+    config_field, credential_counts, face_only_door, parse_card_credential, parse_card_read,
+    reported_enrollment, CredentialCounts, HardwareEnrollType, ParsedCardCredential,
+    ParsedCardRead, ReportedEnrollment,
 };
 
 /// Reachability probe errors (Devices domain). Subset of transport failures.
@@ -70,6 +71,15 @@ pub struct SetPinParams {
 
 pub struct MatrixAdapter {
     client: MatrixHttpClient,
+}
+
+/// Bodies from the documented configuration reads. Key fields stay in `basic`
+/// and are not copied into logs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CardConfigDocuments {
+    pub basic: String,
+    pub reader: String,
+    pub smart_card_format: Option<String>,
 }
 
 impl MatrixAdapter {
@@ -204,7 +214,7 @@ impl MatrixAdapter {
         port: u16,
         username: &str,
         password: &str,
-    ) -> Result<Vec<HardwareEnrollType>, MatrixAdapterError> {
+    ) -> Result<ReportedEnrollment, MatrixAdapterError> {
         let basic = self
             .client
             .get_device_basic_config(host, port, username, password)
@@ -220,11 +230,87 @@ impl MatrixAdapter {
             .get_enroll_options(host, port, username, password)
             .await
             .map_err(map_adapter_error)?;
-        Ok(supported_enroll_types(
+        Ok(reported_enrollment(
             &basic.body,
             &reader.body,
             &options.body,
         ))
+    }
+
+    /// `credential?action=get` for card fields. Does not request templates.
+    /// A missing card number is an empty result, not an error.
+    pub async fn get_card_credential(
+        &self,
+        host: &str,
+        port: u16,
+        username: &str,
+        password: &str,
+        matrix_user_id: &str,
+    ) -> Result<ParsedCardCredential, MatrixAdapterError> {
+        let user_id = validate_user_id(matrix_user_id)?;
+        let body = self
+            .client
+            .get_credential(host, port, username, password, user_id.as_str())
+            .await
+            .map_err(map_adapter_error)?;
+        Ok(parse_card_credential(&body.body))
+    }
+
+    /// Basic config, reader config, and smart-card format.
+    ///
+    /// A missing smart-card format does not fail the read. Format is not changed.
+    pub async fn card_config_documents(
+        &self,
+        host: &str,
+        port: u16,
+        username: &str,
+        password: &str,
+    ) -> Result<CardConfigDocuments, MatrixAdapterError> {
+        let basic = self
+            .client
+            .get_device_basic_config(host, port, username, password)
+            .await
+            .map_err(map_adapter_error)?;
+        let reader = self
+            .client
+            .get_reader_config(host, port, username, password)
+            .await
+            .map_err(map_adapter_error)?;
+        let smart_card_format = match self
+            .client
+            .get_smart_card_format(host, port, username, password)
+            .await
+        {
+            Ok(body) => Some(body.body),
+            Err(error) => {
+                tracing::warn!(
+                    error = %map_adapter_error(error),
+                    "smart card format was not returned"
+                );
+                None
+            }
+        };
+        Ok(CardConfigDocuments {
+            basic: basic.body,
+            reader: reader.body,
+            smart_card_format,
+        })
+    }
+
+    /// Direct card read. Does not create a user or an enrollment.
+    pub async fn read_card(
+        &self,
+        host: &str,
+        port: u16,
+        username: &str,
+        password: &str,
+    ) -> Result<ParsedCardRead, MatrixAdapterError> {
+        let body = self
+            .client
+            .read_card(host, port, username, password)
+            .await
+            .map_err(map_adapter_error)?;
+        Ok(parse_card_read(&body.body))
     }
 
     /// Turn face recognition on or off for an existing Matrix user (`enable-fr`).

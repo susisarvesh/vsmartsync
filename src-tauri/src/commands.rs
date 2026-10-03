@@ -6,13 +6,14 @@
 use crate::common::{app_info, AppInfo, DevicePasswordVault, SecretVault};
 use crate::database::repositories::{
     CredentialRepository, DeviceRepository, DeviceUserRepository, EnrollmentRepository,
-    UserDeviceRepository, UserRepository,
+    EnrollmentSessionRepository, UserDeviceRepository, UserRepository,
 };
 use crate::database::{DatabaseRuntime, DatabaseStatus};
 use crate::domains::credentials::{self, Credential, CredentialError, CredentialListFilter};
 use crate::domains::devices::{self, Device, DeviceError};
 use crate::domains::enrollments::{
-    self, DeviceEnrollmentOptions, Enrollment, EnrollmentError, EnrollmentListFilter,
+    self, CardRead, CardReaderStatus, CardTestResult, DeviceEnrollmentGate,
+    DeviceEnrollmentOptions, Enrollment, EnrollmentError, EnrollmentListFilter, EnrollmentSession,
 };
 use crate::domains::synchronization::{self, SyncError, SyncUsersResult};
 use crate::domains::user_devices::{self, UserDeviceAssignment, UserDeviceError, UserOnDevice};
@@ -102,6 +103,7 @@ pub async fn delete_user(
     let assignments = user_devices_repo(&runtime)?;
     let credentials = credentials_repo(&runtime)?;
     let enrollments = enrollments_repo(&runtime)?;
+    let sessions = enrollment_sessions_repo(&runtime)?;
     let vault = DevicePasswordVault::open().map_err(secret_error_to_command)?;
     let matrix = MatrixAdapter::new().map_err(|_| "MATRIX_UNREACHABLE".to_string())?;
     users::delete_user(
@@ -111,6 +113,7 @@ pub async fn delete_user(
         &assignments,
         &credentials,
         &enrollments,
+        &sessions,
         &vault,
         &matrix,
         id,
@@ -585,6 +588,7 @@ pub async fn device_enrollment_options(
 #[tauri::command]
 pub async fn enroll_on_device(
     runtime: tauri::State<'_, DatabaseRuntime>,
+    gate: tauri::State<'_, DeviceEnrollmentGate>,
     device_id: Uuid,
     user_id: Uuid,
     enroll_type: String,
@@ -596,6 +600,7 @@ pub async fn enroll_on_device(
         enroll_type = %enroll_type,
         "frontend invoked rust"
     );
+    let sessions = enrollment_sessions_repo(&runtime)?;
     let enrollments = enrollments_repo(&runtime)?;
     let users = users_repo(&runtime)?;
     let credentials = credentials_repo(&runtime)?;
@@ -604,7 +609,9 @@ pub async fn enroll_on_device(
     let device_users = device_users_repo(&runtime)?;
     let vault = DevicePasswordVault::open().map_err(secret_error_to_command)?;
     let matrix = MatrixAdapter::new().map_err(|_| "DEVICE_OFFLINE".to_string())?;
+    let pool = enrollment_pool(&runtime)?;
     enrollments::enroll_on_device(
+        &sessions,
         &enrollments,
         &users,
         &credentials,
@@ -613,12 +620,147 @@ pub async fn enroll_on_device(
         &device_users,
         &vault,
         &matrix,
+        &gate,
+        pool,
         device_id,
         user_id,
         &enroll_type,
     )
     .await
     .map_err(enrollment_error_to_command)
+}
+
+#[tauri::command]
+pub async fn start_device_enrollment(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    gate: tauri::State<'_, DeviceEnrollmentGate>,
+    device_id: Uuid,
+    user_id: Uuid,
+    enroll_type: String,
+) -> Result<EnrollmentSession, String> {
+    tracing::info!(
+        command = "start_device_enrollment",
+        device_id = %device_id,
+        user_id = %user_id,
+        enroll_type = %enroll_type,
+        "frontend invoked rust"
+    );
+    let sessions = enrollment_sessions_repo(&runtime)?;
+    let users = users_repo(&runtime)?;
+    let devices = devices_repo(&runtime)?;
+    let assignments = user_devices_repo(&runtime)?;
+    let vault = DevicePasswordVault::open().map_err(secret_error_to_command)?;
+    let matrix = MatrixAdapter::new().map_err(|_| "DEVICE_OFFLINE".to_string())?;
+    let pool = enrollment_pool(&runtime)?;
+    let prepared = enrollments::prepare_device_enrollment(
+        &sessions,
+        &users,
+        &devices,
+        &assignments,
+        &vault,
+        &matrix,
+        &gate,
+        device_id,
+        user_id,
+        &enroll_type,
+    )
+    .await
+    .map_err(enrollment_error_to_command)?;
+    let session = prepared.session.clone();
+    let session_id = prepared.session.id;
+    let guard = prepared.guard;
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = enrollments::execute_device_enrollment(pool, guard, session_id).await {
+            tracing::info!(
+                enrollment_id = %session_id,
+                result = %error,
+                "device enrollment finished"
+            );
+        }
+    });
+    Ok(session)
+}
+
+#[tauri::command]
+pub async fn get_device_enrollment_session(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    id: Uuid,
+) -> Result<EnrollmentSession, String> {
+    tracing::info!(
+        command = "get_device_enrollment_session",
+        enrollment_id = %id,
+        "frontend invoked rust"
+    );
+    let sessions = enrollment_sessions_repo(&runtime)?;
+    let credentials = credentials_repo(&runtime)?;
+    let vault = DevicePasswordVault::open().map_err(secret_error_to_command)?;
+    enrollments::get_enrollment_session(&sessions, &credentials, &vault, id)
+        .await
+        .map_err(enrollment_error_to_command)
+}
+
+#[tauri::command]
+pub async fn cancel_device_enrollment_session(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    id: Uuid,
+) -> Result<EnrollmentSession, String> {
+    tracing::info!(
+        command = "cancel_device_enrollment_session",
+        enrollment_id = %id,
+        "frontend invoked rust"
+    );
+    let sessions = enrollment_sessions_repo(&runtime)?;
+    let credentials = credentials_repo(&runtime)?;
+    let vault = DevicePasswordVault::open().map_err(secret_error_to_command)?;
+    enrollments::cancel_enrollment_session(&sessions, &credentials, &vault, id)
+        .await
+        .map_err(enrollment_error_to_command)
+}
+
+#[tauri::command]
+pub async fn read_card(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    device_id: Uuid,
+) -> Result<CardRead, String> {
+    tracing::info!(command = "read_card", device_id = %device_id, "frontend invoked rust");
+    let devices = devices_repo(&runtime)?;
+    let vault = DevicePasswordVault::open().map_err(secret_error_to_command)?;
+    let matrix = MatrixAdapter::new().map_err(|_| "DEVICE_OFFLINE".to_string())?;
+    enrollments::read_card(&devices, &vault, &matrix, device_id)
+        .await
+        .map_err(enrollment_error_to_command)
+}
+
+#[tauri::command]
+pub async fn get_card_reader_status(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    device_id: Uuid,
+) -> Result<CardReaderStatus, String> {
+    tracing::info!(
+        command = "get_card_reader_status",
+        device_id = %device_id,
+        "frontend invoked rust"
+    );
+    let devices = devices_repo(&runtime)?;
+    let vault = DevicePasswordVault::open().map_err(secret_error_to_command)?;
+    let matrix = MatrixAdapter::new().map_err(|_| "DEVICE_OFFLINE".to_string())?;
+    enrollments::card_reader_status(&devices, &vault, &matrix, device_id)
+        .await
+        .map_err(enrollment_error_to_command)
+}
+
+#[tauri::command]
+pub async fn test_card(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    device_id: Uuid,
+) -> Result<CardTestResult, String> {
+    tracing::info!(command = "test_card", device_id = %device_id, "frontend invoked rust");
+    let devices = devices_repo(&runtime)?;
+    let vault = DevicePasswordVault::open().map_err(secret_error_to_command)?;
+    let matrix = MatrixAdapter::new().map_err(|_| "DEVICE_OFFLINE".to_string())?;
+    enrollments::test_card(&devices, &vault, &matrix, device_id)
+        .await
+        .map_err(enrollment_error_to_command)
 }
 
 fn device_users_repo(runtime: &DatabaseRuntime) -> Result<DeviceUserRepository, String> {
@@ -654,6 +796,19 @@ fn credentials_repo(runtime: &DatabaseRuntime) -> Result<CredentialRepository, S
         .pool()
         .ok_or_else(|| credential_error_to_command(CredentialError::Unavailable))?;
     Ok(CredentialRepository::new(pool))
+}
+
+fn enrollment_sessions_repo(
+    runtime: &DatabaseRuntime,
+) -> Result<EnrollmentSessionRepository, String> {
+    let pool = enrollment_pool(runtime)?;
+    Ok(EnrollmentSessionRepository::new(pool))
+}
+
+fn enrollment_pool(runtime: &DatabaseRuntime) -> Result<crate::database::DbPool, String> {
+    runtime
+        .pool()
+        .ok_or_else(|| enrollment_error_to_command(EnrollmentError::Unavailable))
 }
 
 fn enrollments_repo(runtime: &DatabaseRuntime) -> Result<EnrollmentRepository, String> {

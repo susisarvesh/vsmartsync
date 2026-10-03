@@ -35,6 +35,9 @@ const ENROLL_OPTIONS_PATH: &str = "/device.cgi/enroll-options";
 const ENROLL_USER_PATH: &str = "/device.cgi/enrolluser";
 const COMMAND_PATH: &str = "/device.cgi/command";
 const USERS_PATH: &str = "/device.cgi/users";
+const CREDENTIAL_PATH: &str = "/device.cgi/credential";
+const CARD_READ_WRITE_PATH: &str = "/device.cgi/card-read-write";
+const SMART_CARD_FORMAT_PATH: &str = "/device.cgi/smart-card-format";
 const ENROLL_TIMEOUT: Duration = Duration::from_secs(90);
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -134,6 +137,20 @@ impl MatrixHttpClient {
             .await
     }
 
+    /// GET /device.cgi/smart-card-format?action=get
+    ///
+    /// Read-only. Enrollment does not change the format or any card key.
+    pub async fn get_smart_card_format(
+        &self,
+        host: &str,
+        port: u16,
+        username: &str,
+        password: &str,
+    ) -> Result<MatrixHttpSuccess, MatrixClientError> {
+        self.get_config_document(host, port, username, password, SMART_CARD_FORMAT_PATH)
+            .await
+    }
+
     /// GET /device.cgi/enroll-options?action=get&format=xml
     pub async fn get_enroll_options(
         &self,
@@ -151,6 +168,7 @@ impl MatrixHttpClient {
     /// Starts capture on the device and waits longer than a normal config read
     /// so the person can present a card or face while the device holds the call.
     /// The guide says this response is not the credential itself.
+    #[allow(clippy::too_many_arguments)]
     pub async fn enroll_user(
         &self,
         host: &str,
@@ -168,6 +186,52 @@ impl MatrixHttpClient {
         ];
         query.extend_from_slice(counts);
         let url = build_cgi_get_url(host, port, ENROLL_USER_PATH, &query)?;
+        self.get_documented(url, username, password, ENROLL_TIMEOUT)
+            .await
+    }
+
+    /// GET /device.cgi/credential?action=get&type=2&user-id=&format=xml
+    ///
+    /// Type 2 is the documented card credential. This firmware answers
+    /// "Request Incomplete Command" when `type` is omitted. The body can
+    /// contain card numbers. Callers must not log it.
+    pub async fn get_credential(
+        &self,
+        host: &str,
+        port: u16,
+        username: &str,
+        password: &str,
+        matrix_user_id: &str,
+    ) -> Result<MatrixHttpSuccess, MatrixClientError> {
+        let url = build_cgi_get_url(
+            host,
+            port,
+            CREDENTIAL_PATH,
+            &[
+                ("action", "get"),
+                ("type", "2"),
+                ("user-id", matrix_user_id),
+                ("format", "xml"),
+            ],
+        )?;
+        let (status, body) = self
+            .exchange(url, username, password, REQUEST_TIMEOUT)
+            .await?;
+        evaluate_credential_response(status, body)
+    }
+
+    /// GET /device.cgi/card-read-write?action=read
+    ///
+    /// Direct card inspection. This does not enroll a user. The device holds
+    /// the call while the card reader waits for a tap.
+    pub async fn read_card(
+        &self,
+        host: &str,
+        port: u16,
+        username: &str,
+        password: &str,
+    ) -> Result<MatrixHttpSuccess, MatrixClientError> {
+        let url = build_cgi_get_url(host, port, CARD_READ_WRITE_PATH, &[("action", "read")])?;
         self.get_documented(url, username, password, ENROLL_TIMEOUT)
             .await
     }
@@ -505,6 +569,31 @@ fn count_fields_present(body: &str) -> bool {
     lower.contains("face-count") || lower.contains("card-count") || lower.contains("finger-count")
 }
 
+/// Credential get may return `card1` in XML with no `Response-Code`.
+/// "Request Incomplete Command" has neither and stays a bad response.
+fn evaluate_credential_response(
+    status: StatusCode,
+    body: String,
+) -> Result<MatrixHttpSuccess, MatrixClientError> {
+    match evaluate_matrix_response(status, body.clone()) {
+        Ok(success) => Ok(success),
+        Err(MatrixClientError::BadResponse)
+            if status.is_success() && card_fields_present(&body) =>
+        {
+            Ok(MatrixHttpSuccess {
+                body,
+                response_code: SUCCESS,
+            })
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn card_fields_present(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    lower.contains("card1") || lower.contains("card2")
+}
+
 fn is_cosec_config_document(status: StatusCode, body: &str) -> bool {
     status.is_success() && body.to_ascii_lowercase().contains("<cosec_api")
 }
@@ -597,8 +686,8 @@ fn map_transport_error(error: reqwest::Error) -> MatrixClientError {
 mod tests {
     use super::{
         build_cgi_get_url, evaluate_basic_config_response, evaluate_count_response,
-        evaluate_matrix_response, MatrixClientError, MatrixHttpClient, BASIC_CONFIG_PATH,
-        USERS_PATH,
+        evaluate_credential_response, evaluate_matrix_response, MatrixClientError,
+        MatrixHttpClient, BASIC_CONFIG_PATH, USERS_PATH,
     };
     use crate::matrix::client::response_codes::{FAILURE, REFERENCE_USER_ID_EXISTS, SUCCESS};
     use reqwest::StatusCode;
@@ -866,6 +955,18 @@ mod tests {
     }
 
     #[test]
+    fn credential_xml_with_card_fields_does_not_need_response_code() {
+        let stored = evaluate_credential_response(
+            StatusCode::OK,
+            "<COSEC_API><card1>0</card1><card2>0</card2></COSEC_API>".to_string(),
+        );
+        assert!(stored.is_ok());
+        let incomplete =
+            evaluate_credential_response(StatusCode::OK, "Request Incomplete Command".to_string());
+        assert_eq!(incomplete, Err(MatrixClientError::BadResponse));
+    }
+
+    #[test]
     fn argo_face_digest_challenge_is_accepted() {
         let challenge = concat!(
             "Digest realm=\"Authenticate Yourself\", domain=\"127.0.1.1\", qop=\"auth\", ",
@@ -1045,5 +1146,140 @@ mod tests {
             )
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn credential_get_sends_user_id_and_parses_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/device.cgi/credential"))
+            .and(query_param("action", "get"))
+            .and(query_param("type", "2"))
+            .and(query_param("format", "xml"))
+            .and(query_param("user-id", "VS000001"))
+            .and(basic_auth("admin", "secret"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(
+                    "Response-Code=0 card1=12345678 card-type=4 identifier-type=csn",
+                ),
+            )
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/device.cgi/credential"))
+            .respond_with(
+                ResponseTemplate::new(401)
+                    .insert_header("WWW-Authenticate", "Basic realm=\"device\""),
+            )
+            .with_priority(2)
+            .mount(&server)
+            .await;
+
+        let client = MatrixHttpClient::new().unwrap();
+        let body = client
+            .get_credential(
+                "127.0.0.1",
+                server.address().port(),
+                "admin",
+                "secret",
+                "VS000001",
+            )
+            .await
+            .unwrap();
+        assert!(body.body.contains("card1=12345678"));
+        assert!(!body.body.contains("secret"));
+    }
+
+    #[tokio::test]
+    async fn read_card_uses_card_read_write() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/device.cgi/card-read-write"))
+            .and(query_param("action", "read"))
+            .and(basic_auth("admin", "secret"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string("Response-Code=0 card-no=998877 card-type=5"),
+            )
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/device.cgi/card-read-write"))
+            .respond_with(
+                ResponseTemplate::new(401)
+                    .insert_header("WWW-Authenticate", "Basic realm=\"device\""),
+            )
+            .with_priority(2)
+            .mount(&server)
+            .await;
+
+        let client = MatrixHttpClient::new().unwrap();
+        let body = client
+            .read_card("127.0.0.1", server.address().port(), "admin", "secret")
+            .await
+            .unwrap();
+        assert!(body.body.contains("card-no=998877"));
+    }
+
+    #[tokio::test]
+    async fn read_card_maps_wrong_card_type() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/device.cgi/card-read-write"))
+            .and(basic_auth("admin", "secret"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("Response-Code=29"))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/device.cgi/card-read-write"))
+            .respond_with(
+                ResponseTemplate::new(401)
+                    .insert_header("WWW-Authenticate", "Basic realm=\"device\""),
+            )
+            .with_priority(2)
+            .mount(&server)
+            .await;
+
+        let client = MatrixHttpClient::new().unwrap();
+        let err = client
+            .read_card("127.0.0.1", server.address().port(), "admin", "secret")
+            .await
+            .unwrap_err();
+        assert_eq!(err, MatrixClientError::ApiError { code: 29 });
+    }
+
+    #[tokio::test]
+    async fn smart_card_format_get_does_not_send_a_key() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/device.cgi/smart-card-format"))
+            .and(query_param("action", "get"))
+            .and(basic_auth("admin", "secret"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string("Response-Code=0 card-type=4 card-no=0"),
+            )
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/device.cgi/smart-card-format"))
+            .respond_with(
+                ResponseTemplate::new(401)
+                    .insert_header("WWW-Authenticate", "Basic realm=\"device\""),
+            )
+            .with_priority(2)
+            .mount(&server)
+            .await;
+
+        let client = MatrixHttpClient::new().unwrap();
+        let body = client
+            .get_smart_card_format("127.0.0.1", server.address().port(), "admin", "secret")
+            .await
+            .unwrap();
+        assert!(body.body.contains("card-type=4"));
+        assert!(!body.body.contains("mifare-custom-key="));
     }
 }

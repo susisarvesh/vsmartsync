@@ -20,6 +20,7 @@ use super::{
 ///
 /// Local assignment must already exist. A device that rejects one user does not
 /// stop the remaining users. Credentials are not sent.
+#[allow(clippy::too_many_arguments)]
 pub async fn sync_assigned_users(
     users: &UserRepository,
     devices: &DeviceRepository,
@@ -128,6 +129,7 @@ pub async fn sync_assigned_users(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn push_one(
     users: &UserRepository,
     devices: &DeviceRepository,

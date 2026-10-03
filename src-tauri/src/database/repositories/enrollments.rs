@@ -31,9 +31,10 @@ impl EnrollmentRepository {
             r#"
             INSERT INTO enrollments (
                 id, user_id, credential_id, device_id, status,
-                cancelled_at, revoked_at, activated_at, created_at, updated_at
+                cancelled_at, revoked_at, activated_at, identifier_digest,
+                created_at, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             "#,
         )
         .bind(record.id)
@@ -44,6 +45,7 @@ impl EnrollmentRepository {
         .bind(record.cancelled_at)
         .bind(record.revoked_at)
         .bind(record.activated_at)
+        .bind(&record.identifier_digest)
         .bind(record.created_at)
         .bind(record.updated_at)
         .execute(&self.pool)

@@ -9,13 +9,14 @@ use uuid::Uuid;
 use crate::common::{DevicePasswordVault, SecretError};
 use crate::database::repositories::{
     CredentialRepository, DeviceRepository, DeviceUserRepository, EnrollmentRepository,
-    UserDeviceRepository, UserRepository,
+    EnrollmentSessionRepository, UserDeviceRepository, UserRepository,
 };
 use crate::database::DatabaseError;
 use crate::matrix::{MatrixAdapter, MatrixAdapterError};
 
 use super::UserError;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn delete_user(
     users: &UserRepository,
     devices: &DeviceRepository,
@@ -23,6 +24,7 @@ pub async fn delete_user(
     assignments: &UserDeviceRepository,
     credentials: &CredentialRepository,
     enrollments: &EnrollmentRepository,
+    sessions: &EnrollmentSessionRepository,
     vault: &DevicePasswordVault,
     matrix: &MatrixAdapter,
     user_id: Uuid,
@@ -64,6 +66,10 @@ pub async fn delete_user(
             .map_err(map_matrix_error)?;
     }
 
+    sessions
+        .delete_for_user(user.id)
+        .await
+        .map_err(map_db_error)?;
     enrollments
         .delete_for_user(user.id)
         .await

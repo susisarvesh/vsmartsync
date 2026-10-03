@@ -68,6 +68,7 @@ pub async fn create_enrollment(
         cancelled_at: None,
         revoked_at: None,
         activated_at: None,
+        identifier_digest: None,
         created_at: now,
         updated_at: now,
     };

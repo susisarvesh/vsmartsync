@@ -41,6 +41,8 @@ pub async fn create_credential(
         value_ciphertext: ciphertext,
         value_digest: digest,
         display_hint: hint,
+        card_type: None,
+        identifier_type: None,
         status: CredentialStatus::Active.as_str().to_string(),
         created_at: now,
         updated_at: now,
@@ -59,38 +61,63 @@ pub async fn create_credential(
     get_credential(credentials, record.id).await
 }
 
+pub struct HardwareCredentialDraft {
+    pub credential_type: CredentialType,
+    /// Normalized card number when the device returned one. Otherwise a marker.
+    pub secret: String,
+    pub card_type: Option<String>,
+    pub identifier_type: Option<String>,
+    pub reveal_hint: bool,
+}
+
+pub fn hardware_credential_write(
+    vault: &SecretVault,
+    user_id: Uuid,
+    draft: HardwareCredentialDraft,
+) -> Result<CredentialWriteRecord, CredentialError> {
+    if draft.credential_type.is_operator_secret() {
+        return Err(CredentialError::InvalidType);
+    }
+    let id = Uuid::new_v4();
+    let ciphertext = vault.encrypt(&draft.secret).map_err(map_secret_error)?;
+    let digest = value_digest(draft.credential_type, &draft.secret);
+    let hint = if draft.reveal_hint {
+        display_hint(draft.credential_type, &draft.secret)
+    } else {
+        None
+    };
+    let now = Utc::now();
+    Ok(CredentialWriteRecord {
+        id,
+        user_id,
+        credential_type: draft.credential_type.as_str().to_string(),
+        value_ciphertext: ciphertext,
+        value_digest: digest,
+        display_hint: hint,
+        card_type: draft.card_type,
+        identifier_type: draft.identifier_type,
+        status: CredentialStatus::Active.as_str().to_string(),
+        created_at: now,
+        updated_at: now,
+    })
+}
+
 pub async fn record_hardware_credential(
     credentials: &CredentialRepository,
     users: &UserRepository,
     vault: &SecretVault,
     user_id: Uuid,
-    credential_type: CredentialType,
+    draft: HardwareCredentialDraft,
 ) -> Result<Credential, CredentialError> {
-    if credential_type.is_operator_secret() {
-        return Err(CredentialError::InvalidType);
-    }
     ensure_user_exists(users, user_id).await?;
-    let id = Uuid::new_v4();
-    let marker = format!("enrolled:{id}");
-    let ciphertext = vault.encrypt(&marker).map_err(map_secret_error)?;
-    let digest = value_digest(credential_type, &marker);
-    let now = Utc::now();
-    let record = CredentialWriteRecord {
-        id,
-        user_id,
-        credential_type: credential_type.as_str().to_string(),
-        value_ciphertext: ciphertext,
-        value_digest: digest,
-        display_hint: None,
-        status: CredentialStatus::Active.as_str().to_string(),
-        created_at: now,
-        updated_at: now,
-    };
+    let record = hardware_credential_write(vault, user_id, draft)?;
+    let id = record.id;
+    let credential_type = record.credential_type.clone();
     credentials.insert(&record).await.map_err(map_db_error)?;
     tracing::info!(
         credential_id = %id,
         user_id = %user_id,
-        credential_type = credential_type.as_str(),
+        credential_type = %credential_type,
         command = "record_hardware_credential",
         "recorded hardware enrollment credential"
     );
@@ -253,6 +280,8 @@ mod tests {
             user_name: "Ada".into(),
             credential_type: "card".into(),
             display_hint: Some("••••1234".into()),
+            card_type: None,
+            identifier_type: None,
             status: "active".into(),
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -275,6 +304,8 @@ mod tests {
             user_name: "Ada".into(),
             credential_type: "pin".into(),
             display_hint: None,
+            card_type: None,
+            identifier_type: None,
             status: "active".into(),
             created_at: Utc::now(),
             updated_at: Utc::now(),

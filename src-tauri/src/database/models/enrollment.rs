@@ -32,6 +32,8 @@ pub struct EnrollmentWriteRecord {
     pub cancelled_at: Option<DateTime<Utc>>,
     pub revoked_at: Option<DateTime<Utc>>,
     pub activated_at: Option<DateTime<Utc>>,
+    /// Digest of a card identity. Null for assignments that have no card number.
+    pub identifier_digest: Option<Vec<u8>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

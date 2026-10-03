@@ -1,8 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  CardRead,
+  CardReaderStatus,
+  CardTestResult,
   CreateEnrollmentInput,
   DeviceEnrollmentOptions,
   Enrollment,
+  EnrollmentSession,
   ListEnrollmentsFilter,
 } from "../types/enrollments";
 
@@ -57,6 +61,44 @@ export async function deviceEnrollmentOptions(
   });
 }
 
+export async function startDeviceEnrollment(
+  deviceId: string,
+  userId: string,
+  enrollType: string,
+): Promise<EnrollmentSession> {
+  return invoke<EnrollmentSession>("start_device_enrollment", {
+    deviceId,
+    userId,
+    enrollType,
+  });
+}
+
+export async function getDeviceEnrollmentSession(
+  id: string,
+): Promise<EnrollmentSession> {
+  return invoke<EnrollmentSession>("get_device_enrollment_session", { id });
+}
+
+export async function cancelDeviceEnrollmentSession(
+  id: string,
+): Promise<EnrollmentSession> {
+  return invoke<EnrollmentSession>("cancel_device_enrollment_session", { id });
+}
+
+export async function readCard(deviceId: string): Promise<CardRead> {
+  return invoke<CardRead>("read_card", { deviceId });
+}
+
+export async function getCardReaderStatus(
+  deviceId: string,
+): Promise<CardReaderStatus> {
+  return invoke<CardReaderStatus>("get_card_reader_status", { deviceId });
+}
+
+export async function testCard(deviceId: string): Promise<CardTestResult> {
+  return invoke<CardTestResult>("test_card", { deviceId });
+}
+
 export async function enrollOnDevice(
   deviceId: string,
   userId: string,
@@ -96,7 +138,15 @@ export function enrollmentErrorMessage(code: string): string {
     case "ENROLLMENT_UNSUPPORTED":
       return "This device did not report support for that enrollment type.";
     case "ENROLLMENT_NOT_CAPTURED":
-      return "The device started enrollment, but the card or face was not saved on that user. Present it when the reader prompts, then try again.";
+      return "The device started enrollment, but the credential count did not increase. Present it when the reader prompts, then try again.";
+    case "ENROLLMENT_DEVICE_BUSY":
+      return "This device is already enrolling someone. Wait for that attempt to finish, then try again.";
+    case "ENROLLMENT_PERSISTENCE_FAILED":
+      return "The device enrolled the credential, but it could not be saved here. Do not enroll again until this is reconciled.";
+    case "ENROLLMENT_SESSION_NOT_FOUND":
+      return "That enrollment session does not exist.";
+    case "ENROLLMENT_CANCELLED":
+      return "Enrollment was cancelled in this app. The reader was not remotely cancelled.";
     case "ENROLLMENT_INVALID_TYPE":
       return "Choose an enrollment type the device supports.";
     case "DEVICE_SECRET_UNAVAILABLE":
@@ -110,7 +160,7 @@ export function enrollmentErrorMessage(code: string): string {
     case "DEVICE_BAD_RESPONSE":
       return "The device returned an unexpected response.";
     case "MATRIX_TIMEOUT":
-      return "The device did not finish enrollment in time.";
+      return "Enrollment timed out. Please try again.";
     case "MATRIX_UNREACHABLE":
       return "The device could not be reached.";
     case "MATRIX_INVALID_ARGUMENT":
@@ -119,7 +169,22 @@ export function enrollmentErrorMessage(code: string): string {
       return "PostgreSQL is not connected.";
     default:
       if (code === "MATRIX_API_ERROR:16") {
-        return "The reader is on another screen, so the card was not saved. Leave that screen, start enrollment again, and present the card only when the reader asks.";
+        return "The Matrix device is currently busy with another operation.";
+      }
+      if (code === "MATRIX_API_ERROR:26") {
+        return "The card read parameters do not apply to this card type.";
+      }
+      if (code === "MATRIX_API_ERROR:27") {
+        return "Card was not detected before the enrollment/read timeout.";
+      }
+      if (code === "MATRIX_API_ERROR:28") {
+        return "The device detected a card but could not read it. Check card placement, card technology, and card configuration.";
+      }
+      if (code === "MATRIX_API_ERROR:29") {
+        return "Wrong card type. The card does not match the reader configured on this device.";
+      }
+      if (code === "MATRIX_API_ERROR:30") {
+        return "The card could not be read because its configured security key does not match the device configuration.";
       }
       if (code.startsWith("MATRIX_API_ERROR:")) {
         return `The device refused enrollment (code ${code.slice("MATRIX_API_ERROR:".length)}).`;

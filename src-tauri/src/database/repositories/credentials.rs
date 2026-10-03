@@ -27,9 +27,9 @@ impl CredentialRepository {
             r#"
             INSERT INTO credentials (
                 id, user_id, type, value_ciphertext, value_digest,
-                display_hint, status, created_at, updated_at
+                display_hint, card_type, identifier_type, status, created_at, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             "#,
         )
         .bind(record.id)
@@ -38,6 +38,8 @@ impl CredentialRepository {
         .bind(&record.value_ciphertext)
         .bind(&record.value_digest)
         .bind(&record.display_hint)
+        .bind(&record.card_type)
+        .bind(&record.identifier_type)
         .bind(&record.status)
         .bind(record.created_at)
         .bind(record.updated_at)
@@ -56,6 +58,8 @@ impl CredentialRepository {
                 u.username AS user_name,
                 c.type,
                 c.display_hint,
+                c.card_type,
+                c.identifier_type,
                 c.status,
                 c.created_at,
                 c.updated_at
@@ -82,6 +86,8 @@ impl CredentialRepository {
                 u.username AS user_name,
                 c.type,
                 c.display_hint,
+                c.card_type,
+                c.identifier_type,
                 c.status,
                 c.created_at,
                 c.updated_at
@@ -127,6 +133,8 @@ impl CredentialRepository {
                 u.username AS user_name,
                 c.type,
                 c.display_hint,
+                c.card_type,
+                c.identifier_type,
                 c.status,
                 c.created_at,
                 c.updated_at
@@ -160,6 +168,8 @@ impl CredentialRepository {
                 u.username AS user_name,
                 c.type,
                 c.display_hint,
+                c.card_type,
+                c.identifier_type,
                 c.status,
                 c.created_at,
                 c.updated_at
@@ -171,6 +181,23 @@ impl CredentialRepository {
         .fetch_optional(&self.pool)
         .await
         .map_err(DatabaseError::Query)
+    }
+
+    pub async fn find_value_ciphertext(&self, id: Uuid) -> Result<Option<Vec<u8>>, DatabaseError> {
+        sqlx::query_scalar::<_, Vec<u8>>("SELECT value_ciphertext FROM credentials WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(DatabaseError::Query)
+    }
+
+    pub async fn delete_by_id(&self, id: Uuid) -> Result<(), DatabaseError> {
+        sqlx::query("DELETE FROM credentials WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(DatabaseError::Query)?;
+        Ok(())
     }
 
     pub async fn delete_for_user(&self, user_id: Uuid) -> Result<(), DatabaseError> {

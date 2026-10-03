@@ -4,6 +4,7 @@ import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { MoreHorizontal, Plus, Search } from "lucide-react";
 import { PageHeader, EmptyState, ErrorState } from "@/components/layout/PageHeader";
+import { HardwareEnrollDialog } from "@/components/HardwareEnrollDialog";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import {
@@ -82,6 +83,7 @@ export function UsersPage({ enabled }: UsersPageProps) {
   );
   const [createOpen, setCreateOpen] = useState(false);
   const [viewUser, setViewUser] = useState<User | null>(null);
+  const [enrollUser, setEnrollUser] = useState<User | null>(null);
   const [editUser, setEditUser] = useState<User | null>(null);
   const [activateTarget, setActivateTarget] = useState<User | null>(null);
   const [deactivateTarget, setDeactivateTarget] = useState<User | null>(null);
@@ -585,6 +587,17 @@ export function UsersPage({ enabled }: UsersPageProps) {
             </div>
           </dl>
           <DialogFooter>
+            {viewUser?.status === "active" ? (
+              <Button
+                type="button"
+                onClick={() => {
+                  setEnrollUser(viewUser);
+                  setViewUser(null);
+                }}
+              >
+                Enroll credential
+              </Button>
+            ) : null}
             <Button type="button" variant="secondary" onClick={() => setViewUser(null)}>
               Close
             </Button>
@@ -889,6 +902,19 @@ export function UsersPage({ enabled }: UsersPageProps) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <HardwareEnrollDialog
+        open={Boolean(enrollUser)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEnrollUser(null);
+          }
+        }}
+        fixedUser={
+          enrollUser
+            ? { id: enrollUser.id, username: enrollUser.username }
+            : null
+        }
+      />
     </div>
   );
 }

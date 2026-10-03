@@ -12,9 +12,9 @@ use thiserror::Error;
 use uuid::Uuid;
 
 pub use service::{
-    create_credential, deactivate_credential, get_credential, list_credentials,
-    record_hardware_credential, set_credential_status, update_credential_value,
-    CredentialListFilter,
+    create_credential, deactivate_credential, get_credential, hardware_credential_write,
+    list_credentials, record_hardware_credential, set_credential_status, update_credential_value,
+    CredentialListFilter, HardwareCredentialDraft,
 };
 
 pub const MAX_CARD_LENGTH: usize = 64;
@@ -134,6 +134,10 @@ pub enum CredentialError {
     Unavailable,
 }
 
+pub fn normalize_card_identifier(raw: &str) -> Result<String, CredentialError> {
+    normalize_card(raw)
+}
+
 pub fn normalize_credential_value(
     credential_type: CredentialType,
     raw: &str,
@@ -179,6 +183,18 @@ fn normalize_pin(raw: &str) -> Result<String, CredentialError> {
     Ok(pin.to_string())
 }
 
+/// Digest used to reject the same card identity on one device.
+///
+/// Identifier type is part of the digest so a CSN and a UID with the same
+/// digits stay distinct. The raw number is not stored in the enrollment row.
+pub fn card_identifier_digest(identifier_type: Option<&str>, card_number: &str) -> Vec<u8> {
+    let mut hasher = Sha256::new();
+    hasher.update(identifier_type.unwrap_or("unspecified").as_bytes());
+    hasher.update(b":");
+    hasher.update(card_number.as_bytes());
+    hasher.finalize().to_vec()
+}
+
 pub fn value_digest(credential_type: CredentialType, normalized: &str) -> Vec<u8> {
     let mut hasher = Sha256::new();
     hasher.update(credential_type.as_str().as_bytes());
@@ -189,7 +205,10 @@ pub fn value_digest(credential_type: CredentialType, normalized: &str) -> Vec<u8
 
 pub fn display_hint(credential_type: CredentialType, normalized: &str) -> Option<String> {
     match credential_type {
-        CredentialType::Card => {
+        CredentialType::Card
+        | CredentialType::ReadOnlyCard
+        | CredentialType::SmartCard
+        | CredentialType::BiometricCard => {
             let chars: Vec<char> = normalized.chars().collect();
             let hint = if chars.len() <= 4 {
                 format!("••••{}", chars.iter().collect::<String>())
@@ -200,12 +219,9 @@ pub fn display_hint(credential_type: CredentialType, normalized: &str) -> Option
             Some(hint)
         }
         CredentialType::Pin
-        | CredentialType::ReadOnlyCard
-        | CredentialType::SmartCard
         | CredentialType::Finger
         | CredentialType::Face
-        | CredentialType::DuressFinger
-        | CredentialType::BiometricCard => None,
+        | CredentialType::DuressFinger => None,
     }
 }
 
@@ -214,14 +230,14 @@ pub fn masked_value_from_hint(
     display_hint: Option<&str>,
 ) -> Option<String> {
     match credential_type {
-        CredentialType::Card => display_hint.map(str::to_string),
-        CredentialType::Pin
+        CredentialType::Card
         | CredentialType::ReadOnlyCard
         | CredentialType::SmartCard
+        | CredentialType::BiometricCard => display_hint.map(str::to_string),
+        CredentialType::Pin
         | CredentialType::Finger
         | CredentialType::Face
-        | CredentialType::DuressFinger
-        | CredentialType::BiometricCard => None,
+        | CredentialType::DuressFinger => None,
     }
 }
 
@@ -264,6 +280,15 @@ mod tests {
             normalize_credential_value(CredentialType::Pin, "12ab").unwrap_err(),
             CredentialError::InvalidValue
         );
+    }
+
+    #[test]
+    fn same_card_number_digests_match_across_calls() {
+        let left = super::card_identifier_digest(Some("csn"), "12345678");
+        let right = super::card_identifier_digest(Some("csn"), "12345678");
+        let other_type = super::card_identifier_digest(Some("uid"), "12345678");
+        assert_eq!(left, right);
+        assert_ne!(left, other_type);
     }
 
     #[test]
