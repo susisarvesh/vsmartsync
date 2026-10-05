@@ -5,7 +5,6 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
-import { DatabaseStatusControl } from "@/components/DatabaseStatusControl";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { useAppInfo } from "@/hooks/useAppInfo";
 import { cn } from "@/lib/utils";
@@ -14,10 +13,6 @@ import type { DatabaseStatus } from "@/types/database";
 
 type DashboardPageProps = {
   database: DatabaseStatus | null;
-  databaseLoading: boolean;
-  databaseError: string | null;
-  retrying: boolean;
-  onRetryDatabase: () => void;
   onNavigate: (route: AppRoute) => void;
 };
 
@@ -55,10 +50,6 @@ const MODULES: Array<{
 
 export function DashboardPage({
   database,
-  databaseLoading,
-  databaseError,
-  retrying,
-  onRetryDatabase,
   onNavigate,
 }: DashboardPageProps) {
   const { info, loading: infoLoading, error: infoError } = useAppInfo();
@@ -67,46 +58,10 @@ export function DashboardPage({
   return (
     <div>
       <PageHeader
-        title="Dashboard"
+        title="Workstation Dashboard"
         description="Operational status for this workstation. Only installed modules are shown."
+        titleClassName="text-2xl font-bold tracking-normal"
       />
-
-      <section
-        className={cn(
-          "mb-5 rounded-lg border bg-card p-4",
-          connected ? "border-border" : "border-red-200",
-        )}
-      >
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-foreground">
-              Database
-            </h3>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              Local PostgreSQL required for Users, Assign to device, Devices,
-              Credentials, and Enrollments.
-            </p>
-            {database?.connected ? (
-              <p className="mt-2 font-mono text-xs text-muted-foreground">
-                {database.host}:{database.port} · {database.database}
-              </p>
-            ) : null}
-          </div>
-          <DatabaseStatusControl
-            database={database}
-            loading={databaseLoading}
-            error={databaseError}
-            retrying={retrying}
-            onRetry={onRetryDatabase}
-            size="md"
-          />
-        </div>
-        {databaseError && !connected ? (
-          <p className="mt-3 text-sm text-destructive" role="alert">
-            {databaseError}
-          </p>
-        ) : null}
-      </section>
 
       <section className="mb-5">
         <div className="mb-2 flex items-end justify-between gap-2">
@@ -117,7 +72,7 @@ export function DashboardPage({
             </p>
           ) : null}
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {MODULES.map((module) => {
             const Icon = module.icon;
             return (
@@ -127,29 +82,27 @@ export function DashboardPage({
                 onClick={() => onNavigate(module.id)}
                 disabled={!connected}
                 className={cn(
-                  "group flex items-start gap-3 rounded-lg border border-border bg-card p-4 text-left transition-colors",
+                  "group flex min-h-28 items-center gap-3 rounded-md border border-border bg-card p-4 text-left shadow-sm transition-colors",
                   connected
-                    ? "hover:border-primary/30 hover:bg-accent/40"
+                    ? "hover:border-primary/25 hover:bg-accent/30 hover:shadow-md"
                     : "cursor-not-allowed opacity-60",
                 )}
               >
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-muted-foreground group-hover:border-primary/20 group-hover:text-primary">
-                  <Icon className="h-4 w-4" aria-hidden />
+                <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md border border-primary/10 bg-accent text-primary">
+                  <Icon className="h-5 w-5" aria-hidden />
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-semibold text-foreground">
-                      {module.label}
-                    </span>
-                    <ChevronRight
-                      className="h-4 w-4 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
-                      aria-hidden
-                    />
+                  <span className="block truncate text-sm font-semibold text-foreground">
+                    {module.label}
                   </span>
                   <span className="mt-0.5 block text-xs text-muted-foreground">
                     {module.description}
                   </span>
                 </span>
+                <ChevronRight
+                  className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary"
+                  aria-hidden
+                />
               </button>
             );
           })}
