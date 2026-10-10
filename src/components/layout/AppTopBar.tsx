@@ -12,8 +12,6 @@ type AppTopBarProps = {
   onGoToDashboard: () => void;
   navigationOpen: boolean;
   onToggleNavigation: () => void;
-  onNavigationHoverStart: () => void;
-  onNavigationHoverEnd: () => void;
 };
 
 export function AppTopBar({
@@ -25,8 +23,6 @@ export function AppTopBar({
   onGoToDashboard,
   navigationOpen,
   onToggleNavigation,
-  onNavigationHoverStart,
-  onNavigationHoverEnd,
 }: AppTopBarProps) {
   return (
     <header className="flex h-11 shrink-0 items-center justify-between gap-3 border-b border-border bg-card px-4">
@@ -36,8 +32,6 @@ export function AppTopBar({
           variant="ghost"
           size="icon"
           onClick={onToggleNavigation}
-          onMouseEnter={onNavigationHoverStart}
-          onMouseLeave={onNavigationHoverEnd}
           aria-label={navigationOpen ? "Close navigation menu" : "Open navigation menu"}
           aria-expanded={navigationOpen}
           aria-controls="primary-navigation"

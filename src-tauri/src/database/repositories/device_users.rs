@@ -246,6 +246,67 @@ impl DeviceUserRepository {
         })
     }
 
+    /// Use an imported ID and reference id. Allocation is skipped.
+    pub async fn ensure_with_identity(
+        &self,
+        user_id: Uuid,
+        device_id: Uuid,
+        matrix_user_id: &str,
+        reference_id: i64,
+        now: DateTime<Utc>,
+    ) -> Result<DeviceUserRecord, DatabaseError> {
+        let mut tx = self.pool.begin().await.map_err(DatabaseError::Query)?;
+        if let Some(existing) = sqlx::query_as::<_, DeviceUserRecord>(
+            r#"
+            SELECT
+                id, user_id, device_id, matrix_user_id, matrix_ref_user_id,
+                provisioned_at, created_at, updated_at
+            FROM device_users
+            WHERE user_id = $1 AND device_id = $2
+            "#,
+        )
+        .bind(user_id)
+        .bind(device_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(DatabaseError::Query)?
+        {
+            tx.commit().await.map_err(DatabaseError::Query)?;
+            return Ok(existing);
+        }
+
+        let id = Uuid::new_v4();
+        sqlx::query(
+            r#"
+            INSERT INTO device_users (
+                id, user_id, device_id, matrix_user_id, matrix_ref_user_id,
+                provisioned_at, created_at, updated_at
+            )
+            VALUES ($1, $2, $3, $4, $5, NULL, $6, $6)
+            "#,
+        )
+        .bind(id)
+        .bind(user_id)
+        .bind(device_id)
+        .bind(matrix_user_id)
+        .bind(reference_id)
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .map_err(DatabaseError::Query)?;
+        tx.commit().await.map_err(DatabaseError::Query)?;
+        Ok(DeviceUserRecord {
+            id,
+            user_id,
+            device_id,
+            matrix_user_id: matrix_user_id.to_string(),
+            matrix_ref_user_id: reference_id,
+            provisioned_at: None,
+            created_at: now,
+            updated_at: now,
+        })
+    }
+
     /// Sets `provisioned_at` on first successful provision; leaves existing value if already set.
     pub async fn mark_provisioned(
         &self,

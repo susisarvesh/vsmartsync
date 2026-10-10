@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { AppSidebar } from "@/components/layout/AppSidebar";
 import { AppTopBar } from "@/components/layout/AppTopBar";
 import type { DatabaseStatus } from "@/types/database";
@@ -26,110 +26,54 @@ export function AppShell({
   onRetryDatabase,
   children,
 }: AppShellProps) {
-  const [navigationHovered, setNavigationHovered] = useState(false);
-  const [navigationPinned, setNavigationPinned] = useState(false);
-  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const navigationOpen = navigationHovered || navigationPinned;
-
-  const clearCloseTimer = () => {
-    if (closeTimer.current !== null) {
-      clearTimeout(closeTimer.current);
-      closeTimer.current = null;
-    }
-  };
-
-  const scheduleHoverClose = () => {
-    clearCloseTimer();
-    closeTimer.current = setTimeout(() => {
-      setNavigationHovered(false);
-      closeTimer.current = null;
-    }, 220);
-  };
-
-  const closeNavigation = () => {
-    clearCloseTimer();
-    setNavigationHovered(false);
-    setNavigationPinned(false);
-  };
+  const [navigationOpen, setNavigationOpen] = useState(false);
 
   useEffect(() => {
-    if (!navigationOpen) return;
-
+    if (!navigationOpen) {
+      return;
+    }
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeNavigation();
+      if (event.key === "Escape") {
+        setNavigationOpen(false);
+      }
     };
-
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [navigationOpen]);
 
-  useEffect(() => () => clearCloseTimer(), []);
-
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-      <div className="relative z-50">
+    <div className="flex h-full min-h-0 bg-background text-foreground">
+      <div
+        id="primary-navigation"
+        onMouseEnter={() => setNavigationOpen(true)}
+        onMouseLeave={() => setNavigationOpen(false)}
+        className={cn(
+          "h-full shrink-0 overflow-hidden border-r border-border bg-card transition-[width] duration-200 ease-out motion-reduce:transition-none",
+          navigationOpen ? "w-60" : "w-16",
+        )}
+      >
+        <AppSidebar
+          route={route}
+          expanded={navigationOpen}
+          onNavigate={onNavigate}
+        />
+      </div>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <AppTopBar
           database={database}
           databaseLoading={databaseLoading}
           databaseError={databaseError}
           retrying={retrying}
           onRetryDatabase={onRetryDatabase}
-          onGoToDashboard={() => {
-            onNavigate("dashboard");
-            closeNavigation();
-          }}
+          onGoToDashboard={() => onNavigate("dashboard")}
           navigationOpen={navigationOpen}
-          onToggleNavigation={() => {
-            clearCloseTimer();
-            setNavigationHovered(false);
-            setNavigationPinned((pinned) => !pinned);
-          }}
-          onNavigationHoverStart={() => {
-            clearCloseTimer();
-            setNavigationHovered(true);
-          }}
-          onNavigationHoverEnd={scheduleHoverClose}
+          onToggleNavigation={() => setNavigationOpen((open) => !open)}
         />
-      </div>
-      <div className="flex min-h-0 flex-1">
-        <main className="min-w-0 flex-1 overflow-auto">
-          <div className="mx-auto w-full max-w-6xl p-4 md:p-5">{children}</div>
+        <main className="min-h-0 flex-1 overflow-hidden">
+          <div className="mx-auto flex h-full w-full max-w-6xl flex-col overflow-auto p-4 md:p-5">
+            {children}
+          </div>
         </main>
-      </div>
-      <button
-        type="button"
-        aria-label="Close navigation"
-        tabIndex={navigationOpen ? 0 : -1}
-        onClick={closeNavigation}
-        className={cn(
-          "fixed inset-x-0 bottom-0 top-11 z-40 bg-black/20 transition-opacity duration-200 motion-reduce:transition-none",
-          navigationOpen
-            ? "opacity-100"
-            : "pointer-events-none opacity-0",
-        )}
-      />
-      <div
-        id="primary-navigation"
-        aria-hidden={!navigationOpen}
-        onMouseEnter={() => {
-          clearCloseTimer();
-          setNavigationHovered(true);
-        }}
-        onMouseLeave={scheduleHoverClose}
-        className={cn(
-          "fixed bottom-0 left-0 top-11 z-50 w-60 shadow-lg transition-[transform,visibility] duration-200 ease-out motion-reduce:transition-none",
-          navigationOpen
-            ? "visible translate-x-0"
-            : "invisible -translate-x-full",
-        )}
-      >
-        <AppSidebar
-          route={route}
-          onNavigate={(nextRoute) => {
-            onNavigate(nextRoute);
-            closeNavigation();
-          }}
-        />
       </div>
     </div>
   );

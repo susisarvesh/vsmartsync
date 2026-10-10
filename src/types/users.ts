@@ -24,6 +24,20 @@ export type User = {
   id: string;
   username: string;
   status: UserStatus;
+  matrixUserId: string | null;
+  shortName: string | null;
+  fullName: string | null;
+  referenceId: number | null;
   createdAt: string;
   updatedAt: string;
+};
+
+export type ImportRowError = {
+  row: number;
+  message: string;
+};
+
+export type ImportUsersResult = {
+  imported: number;
+  errors: ImportRowError[];
 };

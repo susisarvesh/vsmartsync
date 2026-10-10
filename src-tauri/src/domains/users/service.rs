@@ -69,6 +69,10 @@ fn to_record(user: &User) -> UserRecord {
         id: user.id,
         username: user.username.clone(),
         status: user.status.as_str().to_string(),
+        matrix_user_id: user.matrix_user_id.clone(),
+        short_name: user.short_name.clone(),
+        full_name: user.full_name.clone(),
+        reference_id: user.reference_id,
         created_at: user.created_at,
         updated_at: user.updated_at,
     }
@@ -79,6 +83,10 @@ fn from_record(record: UserRecord) -> Result<User, UserError> {
         id: record.id,
         username: record.username,
         status: UserStatus::parse(&record.status)?,
+        matrix_user_id: record.matrix_user_id,
+        short_name: record.short_name,
+        full_name: record.full_name,
+        reference_id: record.reference_id,
         created_at: record.created_at,
         updated_at: record.updated_at,
     })

@@ -3,6 +3,8 @@ import {
   activateUser,
   assignUserDevice,
   createUser,
+  importUsers,
+  registerUser,
   deactivateUser,
   deleteUser,
   listUserDevices,
@@ -12,7 +14,7 @@ import {
   updateUser,
   userErrorMessage,
 } from "@/services/users";
-import type { User } from "@/types/users";
+import type { ImportUsersResult, User } from "@/types/users";
 
 function asErrorMessage(reason: unknown): string {
   if (typeof reason === "string") {
@@ -35,6 +37,26 @@ export function useUsersQuery(enabled: boolean) {
     queryKey: ["users"],
     queryFn: listUsers,
     enabled,
+  });
+}
+
+export function useImportUsers() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (bytes: number[]) => importUsers(bytes),
+    onSuccess: (result: ImportUsersResult) => {
+      if (result.imported > 0) {
+        void queryClient.invalidateQueries({ queryKey: ["users"] });
+      }
+    },
+  });
+}
+
+export function useRegisterUser() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: registerUser,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["users"] }),
   });
 }
 

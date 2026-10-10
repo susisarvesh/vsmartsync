@@ -62,6 +62,8 @@ pub fn run() {
             commands::get_database_status,
             commands::connect_database,
             commands::create_user,
+            commands::import_users,
+            commands::register_user,
             commands::list_users,
             commands::update_user,
             commands::activate_user,

@@ -3,6 +3,7 @@
 //! Owns application people records: create, list, update username, activate, deactivate,
 //! and delete. Delete also removes the person from each Matrix device that has them.
 
+mod import;
 mod removal;
 mod service;
 
@@ -11,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
+pub use import::{import_users, register_user, ImportRowError, ImportUsersResult};
 pub use removal::delete_user;
 pub use service::{activate_user, create_user, deactivate_user, list_users, update_user};
 
@@ -46,6 +48,10 @@ pub struct User {
     pub id: Uuid,
     pub username: String,
     pub status: UserStatus,
+    pub matrix_user_id: Option<String>,
+    pub short_name: Option<String>,
+    pub full_name: Option<String>,
+    pub reference_id: Option<i64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -74,6 +80,20 @@ pub enum UserError {
     InvalidArgument,
     #[error("MATRIX_API_ERROR:{code}")]
     ApiError { code: i32 },
+    #[error("USER_IMPORT_UNREADABLE")]
+    ImportUnreadable,
+    #[error("USER_INVALID_ID")]
+    InvalidId,
+    #[error("USER_INVALID_SHORT_NAME")]
+    InvalidShortName,
+    #[error("USER_INVALID_FULL_NAME")]
+    InvalidFullName,
+    #[error("USER_INVALID_REFERENCE")]
+    InvalidReference,
+    #[error("USER_DUPLICATE_ID")]
+    DuplicateId,
+    #[error("USER_DUPLICATE_REFERENCE")]
+    DuplicateReference,
 }
 
 pub fn normalize_username(username: &str) -> Result<String, UserError> {
@@ -89,6 +109,10 @@ pub fn new_user(username: &str, id: Uuid, now: DateTime<Utc>) -> Result<User, Us
         id,
         username: normalize_username(username)?,
         status: UserStatus::Active,
+        matrix_user_id: None,
+        short_name: None,
+        full_name: None,
+        reference_id: None,
         created_at: now,
         updated_at: now,
     })

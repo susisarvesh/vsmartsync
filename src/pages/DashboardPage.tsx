@@ -17,21 +17,21 @@ type DashboardPageProps = {
 };
 
 const MODULES: Array<{
-  id: Exclude<AppRoute, "dashboard">;
+  id: "user-configuration" | "enrollment" | "devices" | "credentials";
   label: string;
   description: string;
   icon: typeof Users;
 }> = [
   {
-    id: "users",
+    id: "user-configuration",
     label: "Users",
-    description: "People in the desired access state",
+    description: "Registered or imported people and their identity",
     icon: Users,
   },
   {
-    id: "assign-device",
-    label: "Assign to device",
-    description: "Choose a device, then assign users to it",
+    id: "enrollment",
+    label: "Enrollment",
+    description: "Assign a person to a device and capture a card or face",
     icon: UserPlus,
   },
   {

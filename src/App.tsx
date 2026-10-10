@@ -7,6 +7,7 @@ import type { AppRoute } from "@/navigation";
 import { AccessLogsPage } from "@/pages/AccessLogsPage";
 import { AssignDevicePage } from "@/pages/AssignDevicePage";
 import { CredentialsPage } from "@/pages/CredentialsPage";
+import { ImportUsersPage } from "@/pages/ImportUsersPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { DevicesPage } from "@/pages/DevicesPage";
 import { UsersPage } from "@/pages/UsersPage";
@@ -27,6 +28,12 @@ function isDesktopApp(): boolean {
 
 function AppContent() {
   const [route, setRoute] = useState<AppRoute>("dashboard");
+  const [enrollmentUserId, setEnrollmentUserId] = useState<string | null>(null);
+
+  function navigate(next: AppRoute, userId?: string | null) {
+    setRoute(next);
+    setEnrollmentUserId(next === "enrollment" ? (userId ?? null) : null);
+  }
   const database = useDatabaseStatus();
   const inDesktopApp = isDesktopApp();
   const databaseConnected = Boolean(database.status?.connected);
@@ -47,7 +54,7 @@ function AppContent() {
   return (
     <AppShell
       route={route}
-      onNavigate={setRoute}
+      onNavigate={navigate}
       database={database.status}
       databaseLoading={database.loading}
       databaseError={database.error}
@@ -57,12 +64,23 @@ function AppContent() {
       {route === "dashboard" ? (
         <DashboardPage
           database={database.status}
-          onNavigate={setRoute}
+          onNavigate={navigate}
         />
       ) : null}
-      {route === "users" ? <UsersPage enabled={databaseConnected} /> : null}
-      {route === "assign-device" ? (
-        <AssignDevicePage enabled={databaseConnected} />
+      {route === "user-configuration" ? (
+        <UsersPage
+          enabled={databaseConnected}
+          onEnroll={(userId) => navigate("enrollment", userId)}
+        />
+      ) : null}
+      {route === "import-users" ? (
+        <ImportUsersPage enabled={databaseConnected} />
+      ) : null}
+      {route === "enrollment" ? (
+        <AssignDevicePage
+          enabled={databaseConnected}
+          focusUserId={enrollmentUserId}
+        />
       ) : null}
       {route === "devices" ? (
         <DevicesPage enabled={databaseConnected} />
@@ -70,7 +88,7 @@ function AppContent() {
       {route === "credentials" ? (
         <CredentialsPage enabled={databaseConnected} />
       ) : null}
-      {route === "access-logs" ? (
+      {route === "in-out-report" ? (
         <AccessLogsPage enabled={databaseConnected} />
       ) : null}
     </AppShell>

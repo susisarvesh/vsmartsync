@@ -18,7 +18,7 @@ use crate::domains::enrollments::{
 use crate::domains::events::{self, AccessEvent, EventError, FetchDeviceEventsResult};
 use crate::domains::synchronization::{self, SyncError, SyncUsersResult};
 use crate::domains::user_devices::{self, UserDeviceAssignment, UserDeviceError, UserOnDevice};
-use crate::domains::users::{self, User, UserError};
+use crate::domains::users::{self, ImportUsersResult, User, UserError};
 use crate::matrix::MatrixAdapter;
 use uuid::Uuid;
 
@@ -56,6 +56,47 @@ pub async fn create_user(
     users::create_user(&repo, &username)
         .await
         .map_err(user_error_to_command)
+}
+
+#[tauri::command]
+pub async fn import_users(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    bytes: Vec<u8>,
+) -> Result<ImportUsersResult, String> {
+    tracing::info!(
+        command = "import_users",
+        bytes = bytes.len(),
+        "frontend invoked rust"
+    );
+    let repo = users_repo(&runtime)?;
+    users::import_users(&repo, &bytes)
+        .await
+        .map_err(user_error_to_command)
+}
+
+#[tauri::command]
+pub async fn register_user(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    matrix_user_id: String,
+    username: String,
+    short_name: String,
+    full_name: String,
+    reference_id: String,
+    active: bool,
+) -> Result<User, String> {
+    tracing::info!(command = "register_user", "frontend invoked rust");
+    let repo = users_repo(&runtime)?;
+    users::register_user(
+        &repo,
+        &matrix_user_id,
+        &username,
+        &short_name,
+        &full_name,
+        &reference_id,
+        active,
+    )
+    .await
+    .map_err(user_error_to_command)
 }
 
 #[tauri::command]
@@ -934,6 +975,18 @@ mod tests {
         assert_eq!(
             user_error_to_command(UserError::Unavailable),
             "DATABASE_UNAVAILABLE"
+        );
+        assert_eq!(
+            user_error_to_command(UserError::InvalidId),
+            "USER_INVALID_ID"
+        );
+        assert_eq!(
+            user_error_to_command(UserError::DuplicateId),
+            "USER_DUPLICATE_ID"
+        );
+        assert_eq!(
+            user_error_to_command(UserError::DuplicateReference),
+            "USER_DUPLICATE_REFERENCE"
         );
         assert!(!user_error_to_command(UserError::Unavailable).contains("postgres://"));
     }

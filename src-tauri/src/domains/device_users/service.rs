@@ -17,7 +17,7 @@ pub async fn ensure_mapping(
     user_id: Uuid,
     device_id: Uuid,
 ) -> Result<DeviceUser, DeviceUserError> {
-    let _user = users
+    let user = users
         .find_by_id(user_id)
         .await
         .map_err(map_db_error)?
@@ -29,10 +29,16 @@ pub async fn ensure_mapping(
         .ok_or(DeviceUserError::DeviceNotFound)?;
 
     let now = Utc::now();
-    let record = device_users
-        .ensure_mapping(user_id, device_id, now)
-        .await
-        .map_err(map_db_error)?;
+    let record = if let (Some(matrix_user_id), Some(reference_id)) =
+        (user.matrix_user_id.as_deref(), user.reference_id)
+    {
+        device_users
+            .ensure_with_identity(user_id, device_id, matrix_user_id, reference_id, now)
+            .await
+    } else {
+        device_users.ensure_mapping(user_id, device_id, now).await
+    }
+    .map_err(map_db_error)?;
 
     tracing::info!(
         command = "ensure_device_user_mapping",

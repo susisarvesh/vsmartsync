@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { EmptyState, ErrorState, PageHeader } from "@/components/layout/PageHeader";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -13,6 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toaster";
+import { HardwareEnrollDialog } from "@/components/HardwareEnrollDialog";
 import { asErrorMessage as deviceErrorMessage, useDevicesQuery } from "@/hooks/useDevices";
 import { asSyncErrorMessage, useSyncAssignedUsers } from "@/hooks/useSync";
 import {
@@ -25,9 +26,10 @@ import { syncErrorMessage, type SyncUsersResult } from "@/services/sync";
 
 type AssignDevicePageProps = {
   enabled: boolean;
+  focusUserId?: string | null;
 };
 
-export function AssignDevicePage({ enabled }: AssignDevicePageProps) {
+export function AssignDevicePage({ enabled, focusUserId = null }: AssignDevicePageProps) {
   const devicesQuery = useDevicesQuery(enabled);
   const usersQuery = useUsersQuery(enabled);
   const assignUserDevice = useAssignUserDevice();
@@ -36,6 +38,7 @@ export function AssignDevicePage({ enabled }: AssignDevicePageProps) {
   const [deviceId, setDeviceId] = useState("");
   const [search, setSearch] = useState("");
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
+  const [enrollUserId, setEnrollUserId] = useState<string | null>(null);
   const assignedQuery = useUsersForDeviceQuery(deviceId || null);
 
   const selectedDevice = (devicesQuery.data ?? []).find(
@@ -52,9 +55,20 @@ export function AssignDevicePage({ enabled }: AssignDevicePageProps) {
       if (!query) {
         return true;
       }
-      return user.username.toLowerCase().includes(query);
+      return (
+        user.username.toLowerCase().includes(query) ||
+        (user.matrixUserId ?? "").toLowerCase().includes(query)
+      );
     });
   }, [search, usersQuery.data]);
+
+  useEffect(() => {
+    if (focusUserId) {
+      setSelectedUserIds([focusUserId]);
+    }
+  }, [focusUserId]);
+
+  const enrollUser = (usersQuery.data ?? []).find((user) => user.id === enrollUserId) ?? null;
 
   function userOnDevice(userId: string) {
     return (assignedQuery.data ?? []).some(
@@ -165,8 +179,8 @@ export function AssignDevicePage({ enabled }: AssignDevicePageProps) {
     return (
       <div>
         <PageHeader
-          title="Assign to device"
-          description="Select a device, then choose users to assign and add on that COSEC device."
+          title="Enrollment"
+          description="Assign an imported person to a device, then capture a card or face on the reader."
         />
         <ErrorState
           title="Database required"
@@ -179,10 +193,18 @@ export function AssignDevicePage({ enabled }: AssignDevicePageProps) {
   return (
     <div>
       <PageHeader
-        title="Assign to device"
-        description="Select a device, then choose users. Assign stores the link locally and adds each person on the COSEC device."
+        title="Enrollment"
+        description="Choose a device and the imported people. Assign sends their ID and reference id to that device. Enroll on reader captures a card or face."
         action={
           <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={selectedUserIds.length !== 1}
+              onClick={() => setEnrollUserId(selectedUserIds[0] ?? null)}
+            >
+              Enroll on reader
+            </Button>
             <Button
               type="button"
               variant="secondary"
@@ -296,7 +318,7 @@ export function AssignDevicePage({ enabled }: AssignDevicePageProps) {
           (usersQuery.data?.length ?? 0) === 0 ? (
             <EmptyState
               title="No users yet"
-              description="Create a user on the Users page before assigning anyone."
+              description="Register a user, or import a list, before assigning anyone to a device."
             />
           ) : null}
 
@@ -329,7 +351,8 @@ export function AssignDevicePage({ enabled }: AssignDevicePageProps) {
                         onChange={toggleAllSelectable}
                       />
                     </th>
-                    <th className="px-3 py-2 font-medium">Username</th>
+                    <th className="px-3 py-2 font-medium">Name</th>
+                    <th className="px-3 py-2 font-medium">ID</th>
                     <th className="px-3 py-2 font-medium">Status</th>
                     <th className="px-3 py-2 font-medium">Assignment</th>
                   </tr>
@@ -357,6 +380,9 @@ export function AssignDevicePage({ enabled }: AssignDevicePageProps) {
                         <td className="px-3 py-2 font-medium text-foreground">
                           {user.username}
                         </td>
+                        <td className="px-3 py-2 text-muted-foreground">
+                          {user.matrixUserId ?? "Not imported"}
+                        </td>
                         <td className="px-3 py-2">
                           <StatusBadge status={user.status} />
                         </td>
@@ -376,6 +402,17 @@ export function AssignDevicePage({ enabled }: AssignDevicePageProps) {
           ) : null}
         </>
       ) : null}
+      <HardwareEnrollDialog
+        open={Boolean(enrollUser)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEnrollUserId(null);
+          }
+        }}
+        fixedUser={
+          enrollUser ? { id: enrollUser.id, username: enrollUser.username } : null
+        }
+      />
     </div>
   );
 }

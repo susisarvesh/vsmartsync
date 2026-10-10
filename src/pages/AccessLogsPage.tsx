@@ -59,7 +59,7 @@ export function AccessLogsPage({ enabled }: AccessLogsPageProps) {
   return (
     <div>
       <PageHeader
-        title="Access logs"
+        title="In/Out Report"
         description="Entries the device already allowed or recorded after someone presented a card or face. The time, name, and device are saved here."
         action={
           <Button

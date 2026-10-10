@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { User, UserDeviceAssignment, UserOnDevice } from "../types/users";
+import type {
+  ImportUsersResult,
+  User,
+  UserDeviceAssignment,
+  UserOnDevice,
+} from "../types/users";
 
 /**
  * Frontend access to Rust must go through this services layer.
@@ -8,6 +13,21 @@ import type { User, UserDeviceAssignment, UserOnDevice } from "../types/users";
  */
 export async function listUsers(): Promise<User[]> {
   return invoke<User[]>("list_users");
+}
+
+export async function importUsers(bytes: number[]): Promise<ImportUsersResult> {
+  return invoke<ImportUsersResult>("import_users", { bytes });
+}
+
+export async function registerUser(input: {
+  matrixUserId: string;
+  username: string;
+  shortName: string;
+  fullName: string;
+  referenceId: string;
+  active: boolean;
+}): Promise<User> {
+  return invoke<User>("register_user", input);
 }
 
 export async function createUser(username: string): Promise<User> {
@@ -59,7 +79,21 @@ export async function removeUserDevice(
 export function userErrorMessage(code: string): string {
   switch (code) {
     case "USER_INVALID_USERNAME":
-      return "Enter a username (1–200 characters).";
+      return "Name is required and must be 200 characters or fewer.";
+    case "USER_INVALID_ID":
+      return "ID is required and must be 1–15 letters or digits.";
+    case "USER_INVALID_SHORT_NAME":
+      return "Short Name is required and must be 15 characters or fewer.";
+    case "USER_INVALID_FULL_NAME":
+      return "Full Name must be 200 characters or fewer.";
+    case "USER_INVALID_REFERENCE":
+      return "Reference ID is required and must be a number from 1 to 99999999.";
+    case "USER_DUPLICATE_ID":
+      return "That ID is already stored.";
+    case "USER_DUPLICATE_REFERENCE":
+      return "That Reference ID is already stored.";
+    case "USER_IMPORT_UNREADABLE":
+      return "That file could not be read. Use an .xls or .xlsx sheet under 2 MB.";
     case "USER_NOT_FOUND":
       return "That user does not exist.";
     case "DEVICE_NOT_FOUND":
