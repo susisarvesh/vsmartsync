@@ -57,10 +57,6 @@ function AppContent() {
       {route === "dashboard" ? (
         <DashboardPage
           database={database.status}
-          databaseLoading={database.loading}
-          databaseError={database.error}
-          retrying={database.retrying}
-          onRetryDatabase={database.retry}
           onNavigate={setRoute}
         />
       ) : null}

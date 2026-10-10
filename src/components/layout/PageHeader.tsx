@@ -1,17 +1,29 @@
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 type PageHeaderProps = {
   title: string;
   description: string;
   action?: ReactNode;
+  titleClassName?: string;
 };
 
-export function PageHeader({ title, description, action }: PageHeaderProps) {
+export function PageHeader({
+  title,
+  description,
+  action,
+  titleClassName,
+}: PageHeaderProps) {
   return (
     <div className="mb-5 flex flex-wrap items-start justify-between gap-3 border-b border-border pb-4">
       <div className="min-w-0 max-w-3xl">
-        <h2 className="text-lg font-semibold tracking-tight text-foreground">
+        <h2
+          className={cn(
+            "text-lg font-semibold tracking-tight text-foreground",
+            titleClassName,
+          )}
+        >
           {title}
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">{description}</p>

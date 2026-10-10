@@ -25,13 +25,12 @@ type AppSidebarProps = {
 
 export function AppSidebar({ route, onNavigate }: AppSidebarProps) {
   return (
-    <aside className="flex w-14 shrink-0 flex-col border-r border-border bg-card sm:w-52 lg:w-60">
+    <aside className="flex h-full w-full flex-col border-r border-border bg-card">
       <div className="border-b border-border px-4 py-3.5">
         <p className="truncate text-sm font-semibold tracking-tight text-foreground">
-          <span className="sm:hidden">VS</span>
-          <span className="hidden sm:inline">Vsmart Sync</span>
+          Vsmart Sync
         </p>
-        <p className="mt-0.5 hidden text-xs leading-snug text-muted-foreground sm:block">
+        <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
           Local access-control workstation
         </p>
       </div>
@@ -66,13 +65,13 @@ export function AppSidebar({ route, onNavigate }: AppSidebarProps) {
                 )}
                 aria-hidden
               />
-              <span className="hidden truncate sm:inline">{item.label}</span>
+              <span className="truncate">{item.label}</span>
             </button>
           );
         })}
       </nav>
       <div className="border-t border-border px-3 py-2.5">
-        <p className="hidden text-[11px] text-muted-foreground sm:block">
+        <p className="text-[11px] text-muted-foreground">
           Installed modules only. Sync appears here when available.
         </p>
       </div>
