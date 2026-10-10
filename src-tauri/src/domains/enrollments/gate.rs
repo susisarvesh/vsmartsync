@@ -36,6 +36,10 @@ impl DeviceEnrollmentGate {
         Ok(())
     }
 
+    pub fn is_busy(&self, device_id: Uuid) -> bool {
+        self.lock().contains_key(&device_id)
+    }
+
     pub fn release(&self, device_id: Uuid, session_id: Uuid) {
         let mut active = self.lock();
         if active.get(&device_id) == Some(&session_id) {

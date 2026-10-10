@@ -38,9 +38,10 @@ use crate::domains::devices::DeviceStatus;
 use crate::domains::synchronization::matrix_display_name;
 use crate::domains::users::UserStatus;
 use crate::matrix::{
-    capture_increased, configured_reader, diagnose_card_read, parse_card_key_flags,
-    parse_smart_card_format, CardReadAttempt, HardwareEnrollType, MatrixAdapter,
-    MatrixAdapterError, ParsedCardCredential, SetUserParams,
+    capture_enroll_type, capture_increased, configured_reader, diagnose_card_read,
+    door_access_mode, parse_card_key_flags, parse_internal_card_format, parse_smart_card_format,
+    reader_slots, CardReadAttempt, CardReaderFamily, HardwareEnrollType, MatrixAdapter,
+    MatrixAdapterError, ParsedCardCredential, ReportedReaderSlot, SetUserParams,
 };
 
 use super::gate::DeviceEnrollmentGuard;
@@ -116,11 +117,26 @@ pub async fn card_reader_status(
     drop(password);
     record_online(devices, device_id).await;
     let reader = configured_reader(&docs.reader);
+    let readers = reader_slots(&docs.reader)
+        .into_iter()
+        .map(|slot: ReportedReaderSlot| super::ReaderSlotStatus {
+            slot: slot.slot.to_string(),
+            code: slot.code,
+            label: slot.label.to_string(),
+            family: slot.family.map(|family| family.as_str().to_string()),
+        })
+        .collect();
+    let access_mode = door_access_mode(&docs.reader);
     let flags = parse_card_key_flags(&docs.basic);
     let format = docs
         .smart_card_format
         .as_deref()
         .map(parse_smart_card_format)
+        .unwrap_or_default();
+    let internal = docs
+        .internal_card_format
+        .as_deref()
+        .map(parse_internal_card_format)
         .unwrap_or_default();
     if let Some(reader) = reader {
         tracing::info!(
@@ -133,8 +149,11 @@ pub async fn card_reader_status(
     if docs.smart_card_format.is_some() {
         tracing::info!(
             device_id = %device_id,
+            reader1 = reader.map(|value| value.code),
             card_type = format.card_type.map(|value| value.as_str()),
-            identifier = format.identifier.map(|value| value.as_str()),
+            card_number_mode = format.identifier.map(|value| value.as_str()),
+            read_csn = format.read_csn.as_deref(),
+            max_no_of_bits = internal.max_no_of_bits,
             "smart_card_config_loaded"
         );
     }
@@ -149,15 +168,16 @@ pub async fn card_reader_status(
     let supported = family.is_some();
     let mut message = match reader {
         None => "No card reader is configured on this device.".to_string(),
-        Some(value) if value.family.is_some_and(|family| family.is_proximity()) => format!(
-            "This is a {}. It reads a proximity card when enrollment starts. Click Enroll on device, then hold the card flat on the reader on the door.",
-            value.label
+        Some(value) if value.family == Some(CardReaderFamily::Mifare) => {
+            "Present your MIFARE card on the reader.".to_string()
+        }
+        Some(value) if value.family.is_some_and(|family| !family.uses_card_read()) => format!(
+            "This device reports {} (reader code {}). The smart-card read does not detect a card on that setting. Click Enroll on device, then hold the card on the reader.",
+            value.label, value.code
         ),
         Some(_) if supported => "Ready to test card.".to_string(),
-        Some(_) => {
-            "This reader is configured, but card compatibility is not documented for it."
-                .to_string()
-        }
+        Some(_) => "This reader is configured, but card compatibility is not documented for it."
+            .to_string(),
     };
     if flags.mifare_custom_key_enabled || flags.hid_iclass_custom_key_enabled {
         message.push_str(" A custom card key is enabled. Reading may depend on that key.");
@@ -167,6 +187,8 @@ pub async fn card_reader_status(
         reader: reader.and_then(|value| value.family.map(|family| family.as_str().to_string())),
         reader_label: reader.map(|value| value.label.to_string()),
         reader_code: reader.map(|value| value.code),
+        readers,
+        door_access_mode: access_mode,
         supported,
         card_type: format.card_type.map(|value| value.as_str().to_string()),
         card_type_label: format.card_type.map(|value| value.label().to_string()),
@@ -175,6 +197,8 @@ pub async fn card_reader_status(
         mifare_custom_key_enabled: flags.mifare_custom_key_enabled,
         hid_iclass_custom_key_enabled: flags.hid_iclass_custom_key_enabled,
         card_custom_key_auto_update: flags.card_custom_key_auto_update,
+        read_csn: format.read_csn,
+        max_card_bits: internal.max_no_of_bits,
         message,
     })
 }
@@ -193,13 +217,36 @@ pub async fn test_card(
         .await
         .map_err(map_matrix_error)?;
     let reader = configured_reader(&docs.reader);
-    tracing::info!(device_id = %device_id, "card_test_started");
+    let format = docs
+        .smart_card_format
+        .as_deref()
+        .map(parse_smart_card_format)
+        .unwrap_or_default();
+    let internal = docs
+        .internal_card_format
+        .as_deref()
+        .map(parse_internal_card_format)
+        .unwrap_or_default();
+    tracing::info!(
+        device_id = %device_id,
+        reader = reader.map(|value| value.label),
+        reader1 = reader.map(|value| value.code),
+        card_type = format.card_type.map(|value| value.as_str()),
+        card_number_mode = format.identifier.map(|value| value.as_str()),
+        read_csn = format.read_csn.as_deref(),
+        max_no_of_bits = internal.max_no_of_bits,
+        "card_test_started"
+    );
     let family = reader.and_then(|value| value.family);
     let attempt = if family.is_none() {
         CardReadAttempt::NotAttempted
-    } else if family.is_some_and(|value| value.is_proximity()) {
-        tracing::info!(device_id = %device_id, "proximity reader skips smart-card read");
-        CardReadAttempt::ProximityReader
+    } else if family.is_some_and(|family| !family.uses_card_read()) {
+        tracing::info!(
+            device_id = %device_id,
+            reader1 = reader.map(|value| value.code),
+            "reader does not use the smart-card read"
+        );
+        CardReadAttempt::DirectEnrollment
     } else {
         match matrix
             .read_card(&device.host, port, &device.username, &password)
@@ -215,19 +262,43 @@ pub async fn test_card(
     match report.outcome {
         "success" => tracing::info!(
             device_id = %device_id,
+            response_code = report.response_code,
             card_type = report.card_type.as_deref(),
             card_number = report.card_number.as_deref().map(mask_card_number),
             "card_detected"
         ),
-        "timeout" => tracing::info!(device_id = %device_id, "card_test_timeout"),
+        "timeout" => tracing::info!(
+            device_id = %device_id,
+            response_code = report.response_code,
+            "card_test_timeout"
+        ),
         "wrong_card_type" | "incompatible" => {
-            tracing::info!(device_id = %device_id, outcome = report.outcome, "card_wrong_type")
+            tracing::info!(
+                device_id = %device_id,
+                outcome = report.outcome,
+                response_code = report.response_code,
+                "card_wrong_type"
+            )
         }
-        "key_mismatch" => tracing::info!(device_id = %device_id, "card_key_mismatch"),
+        "key_mismatch" => tracing::info!(
+            device_id = %device_id,
+            response_code = report.response_code,
+            "card_key_mismatch"
+        ),
         "read_failed" | "parameters_not_applicable" => {
-            tracing::info!(device_id = %device_id, outcome = report.outcome, "card_read_failed")
+            tracing::info!(
+                device_id = %device_id,
+                outcome = report.outcome,
+                response_code = report.response_code,
+                "card_read_failed"
+            )
         }
-        _ => tracing::info!(device_id = %device_id, outcome = report.outcome, "card_read_failed"),
+        _ => tracing::info!(
+            device_id = %device_id,
+            outcome = report.outcome,
+            response_code = report.response_code,
+            "card_read_failed"
+        ),
     }
     Ok(super::CardTestResult {
         device_id,
@@ -238,7 +309,8 @@ pub async fn test_card(
         reader_label: report.reader_label,
         card_type: report.card_type,
         card_type_label: report.card_type_label,
-        card_number: report.card_number,
+        card_number: report.card_number.as_deref().map(mask_card_number),
+        response_code: report.response_code,
     })
 }
 
@@ -568,11 +640,24 @@ async fn run_capture(
         .await
         .map_err(map_device_user_error)?;
 
-    if stores_card(enroll_type) {
+    let reader_config = if stores_card(enroll_type) {
         retry_if_reader_busy(|| {
             matrix.enable_card_and_face_access(&device.host, port, &device.username, &password)
         })
-        .await?;
+        .await?
+    } else {
+        String::new()
+    };
+    let capture_type = capture_enroll_type(enroll_type, &reader_config);
+    if capture_type != enroll_type {
+        tracing::info!(
+            enrollment_id = %session_id,
+            device_id = %device_id,
+            requested = enroll_type.as_str(),
+            capture = capture_type.as_str(),
+            matrix_type = capture_type.matrix_type(),
+            "card enrollment uses the read-only card command"
+        );
     }
 
     let before = matrix
@@ -625,7 +710,8 @@ async fn run_capture(
         enrollment_id = %session_id,
         user_id = %user_id,
         device_id = %device_id,
-        credential_type = enroll_type.as_str(),
+        credential_type = capture_type.as_str(),
+        matrix_type = capture_type.matrix_type(),
         "enrollment_waiting"
     );
 
@@ -636,7 +722,7 @@ async fn run_capture(
         &device.username,
         &password,
         &mapping.matrix_user_id,
-        enroll_type,
+        capture_type,
         device_id,
         user_id,
         before,
@@ -650,7 +736,7 @@ async fn run_capture(
 
     let mut parsed = ParsedCardCredential::default();
     let mut identifier_unavailable = false;
-    if stores_card(enroll_type) {
+    if stores_card(capture_type) {
         match matrix
             .get_card_credential(
                 &device.host,
@@ -706,7 +792,7 @@ async fn run_capture(
         .card_number
         .as_deref()
         .and_then(|value| normalize_card_identifier(value).ok());
-    if stores_card(enroll_type) && card_number.is_none() {
+    if stores_card(capture_type) && card_number.is_none() {
         identifier_unavailable = true;
     }
     Ok(SavedCapture {

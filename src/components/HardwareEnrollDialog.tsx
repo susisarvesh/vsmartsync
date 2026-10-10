@@ -45,11 +45,38 @@ function isCardType(enrollType: string): boolean {
   );
 }
 
-function isProximityReader(reader: string | null | undefined): boolean {
+function isMifareReader(reader: string | null | undefined): boolean {
+  return reader === "MIFARE";
+}
+
+function readerSlotTitle(slot: string): string {
+  if (slot === "reader1") {
+    return "Reader 1";
+  }
+  if (slot === "reader2") {
+    return "Reader 2";
+  }
+  if (slot === "reader3") {
+    return "Reader 3";
+  }
+  return slot;
+}
+
+function readerFormat(family: string | null, label: string): string {
+  if (family === "MIFARE") {
+    return "MIFARE";
+  }
+  if (family === "HID Prox") {
+    return "HID";
+  }
+  return label;
+}
+
+function enrollsWithoutCardRead(reader: string | null | undefined): boolean {
   return reader === "EM Prox" || reader === "HID Prox";
 }
 
-function presentCopy(enrollType: string): string {
+function presentCopy(enrollType: string, reader: string | null | undefined): string {
   if (enrollType === "face") {
     return "Please look at the Matrix reader.";
   }
@@ -60,16 +87,22 @@ function presentCopy(enrollType: string): string {
   ) {
     return "Please present your finger on the Matrix reader.";
   }
+  if (isMifareReader(reader)) {
+    return "Present your MIFARE card on the reader.";
+  }
   return "Hold the card flat on the card reader on the door until it accepts it.";
 }
 
-function sessionMessage(session: EnrollmentSession): string {
+function sessionMessage(
+  session: EnrollmentSession,
+  reader: string | null | undefined,
+): string {
   switch (session.status) {
     case "starting":
     case "processing":
       return "Starting the reader.";
     case "waiting_for_card":
-      return presentCopy(session.enrollType);
+      return presentCopy(session.enrollType, reader);
     case "verifying":
     case "saving":
       return "Checking that the device stored the credential.";
@@ -117,8 +150,9 @@ export function HardwareEnrollDialog({
   const cancelSession = useCancelDeviceEnrollment();
   const testCard = useTestCard();
   const session = sessionQuery.data;
-  const proximityReader = isProximityReader(readerStatus.data?.reader);
-  const cardTestRequired = isCardType(enrollType) && !proximityReader;
+  const mifareReader = isMifareReader(readerStatus.data?.reader);
+  const directEnrollment = enrollsWithoutCardRead(readerStatus.data?.reader);
+  const cardTestRequired = isCardType(enrollType) && !directEnrollment;
   const waiting = Boolean(
     session &&
       (session.status === "starting" ||
@@ -133,6 +167,25 @@ export function HardwareEnrollDialog({
       setUserId(fixedUser.id);
     }
   }, [fixedUser]);
+
+  useEffect(() => {
+    if (!open || enrollType) {
+      return;
+    }
+    const preferred =
+      readerStatus.data?.reader === "MIFARE"
+        ? "smart_card"
+        : enrollsWithoutCardRead(readerStatus.data?.reader)
+          ? "read_only_card"
+          : null;
+    if (!preferred) {
+      return;
+    }
+    const match = options.data?.options.find((option) => option.enrollType === preferred);
+    if (match) {
+      setEnrollType(match.enrollType);
+    }
+  }, [open, enrollType, options.data, readerStatus.data?.reader]);
 
   useEffect(() => {
     if (session?.status !== "success") {
@@ -264,24 +317,50 @@ export function HardwareEnrollDialog({
           {deviceId ? (
             <div className="grid gap-1 rounded-md border border-border p-3 text-sm">
               <p className="font-medium">Card reader</p>
+              {(readerStatus.data?.readers.length ?? 0) > 0
+                ? readerStatus.data?.readers.map((slot) => (
+                    <p key={slot.slot}>
+                      <span className="text-muted-foreground">
+                        {readerSlotTitle(slot.slot)}:{" "}
+                      </span>
+                      {readerFormat(slot.family, slot.label)} ({slot.code})
+                    </p>
+                  ))
+                : (
+                    <p>
+                      <span className="text-muted-foreground">Reader: </span>
+                      {readerStatus.isLoading ? "Checking the device…" : "Not reported"}
+                    </p>
+                  )}
               <p>
-                <span className="text-muted-foreground">Reader: </span>
-                {readerStatus.data?.readerLabel ??
-                  (readerStatus.isLoading ? "Checking the device…" : "Not reported")}
+                <span className="text-muted-foreground">Door access mode: </span>
+                {readerStatus.data?.doorAccessMode ?? "Not reported"}
               </p>
               <p>
                 <span className="text-muted-foreground">Smart card: </span>
                 {readerStatus.data?.cardTypeLabel ?? "Not reported"}
               </p>
               <p>
-                <span className="text-muted-foreground">Identifier: </span>
+                <span className="text-muted-foreground">Card number mode: </span>
                 {readerStatus.data?.identifierLabel ?? "Not reported"}
+              </p>
+              <p>
+                <span className="text-muted-foreground">Read CSN: </span>
+                {readerStatus.data?.readCsn ?? "Not reported"}
+              </p>
+              <p>
+                <span className="text-muted-foreground">Reported format bits: </span>
+                {readerStatus.data?.maxCardBits ?? "Not reported"}
               </p>
               <p>
                 <span className="text-muted-foreground">Status: </span>
                 {testCard.isPending
-                  ? "Present your card on the reader…"
-                  : (cardTest?.message ?? readerStatus.data?.message ?? "Ready")}
+                  ? mifareReader
+                    ? "Present your MIFARE card on the reader."
+                    : "Present your card on the reader…"
+                  : directEnrollment
+                    ? `This device reports ${readerStatus.data?.readerLabel ?? "this reader"}. The smart-card read does not detect a card on that setting. Click Enroll on device, then hold the card on the reader.`
+                    : (cardTest?.message ?? readerStatus.data?.message ?? "Ready")}
               </p>
               {readerStatus.isError ? (
                 <p className="text-xs text-destructive">
@@ -290,7 +369,7 @@ export function HardwareEnrollDialog({
               ) : null}
               {cardTest?.outcome === "success" && cardTest.cardTypeLabel ? (
                 <p>
-                  <span className="text-muted-foreground">Card type: </span>
+                  <span className="text-muted-foreground">Detected card: </span>
                   {cardTest.cardTypeLabel}
                 </p>
               ) : null}
@@ -374,7 +453,7 @@ export function HardwareEnrollDialog({
           )}
           {session ? (
             <div className="grid gap-1 text-sm">
-              <p>{sessionMessage(session)}</p>
+              <p>{sessionMessage(session, readerStatus.data?.reader)}</p>
               {session.status === "success" && session.cardTypeLabel ? (
                 <p>
                   <span className="text-muted-foreground">Card type: </span>
@@ -402,8 +481,24 @@ export function HardwareEnrollDialog({
               ) : null}
             </div>
           ) : null}
-          {cardTest && cardTest.outcome !== "success" && cardTest.outcome !== "proximity" ? (
-            <p className="text-sm text-destructive">{cardTest.message}</p>
+          {cardTest && cardTest.outcome !== "success" && !directEnrollment ? (
+            <div className="grid gap-1 text-sm text-destructive">
+              <p className="font-medium">Card read failed</p>
+              <p>
+                <span>Reader: </span>
+                {mifareReader ? "MIFARE" : (cardTest.readerLabel ?? "Not reported")}
+              </p>
+              <p>
+                <span>Reason: </span>
+                {cardTest.message}
+              </p>
+              {cardTest.responseCode != null ? (
+                <p>
+                  <span>Matrix response code: </span>
+                  {cardTest.responseCode}
+                </p>
+              ) : null}
+            </div>
           ) : null}
         </div>
         <DialogFooter>
@@ -417,7 +512,11 @@ export function HardwareEnrollDialog({
               disabled={!deviceId || !readerStatus.data?.supported || testCard.isPending}
               onClick={() => void onTestCard()}
             >
-              {testCard.isPending ? "Present your card…" : "Test card"}
+              {testCard.isPending
+                ? mifareReader
+                  ? "Present your MIFARE card…"
+                  : "Present your card…"
+                : "Test card"}
             </Button>
           ) : null}
           <Button

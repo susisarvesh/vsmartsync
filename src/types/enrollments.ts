@@ -80,11 +80,20 @@ export type CardRead = {
   cardNumber: string | null;
 };
 
+export type ReaderSlotStatus = {
+  slot: string;
+  code: number;
+  label: string;
+  family: string | null;
+};
+
 export type CardReaderStatus = {
   deviceId: string;
   reader: string | null;
   readerLabel: string | null;
   readerCode: number | null;
+  readers: ReaderSlotStatus[];
+  doorAccessMode: number | null;
   supported: boolean;
   cardType: string | null;
   cardTypeLabel: string | null;
@@ -93,6 +102,8 @@ export type CardReaderStatus = {
   mifareCustomKeyEnabled: boolean;
   hidIclassCustomKeyEnabled: boolean;
   cardCustomKeyAutoUpdate: boolean;
+  readCsn: string | null;
+  maxCardBits: number | null;
   message: string;
 };
 
@@ -106,6 +117,7 @@ export type CardTestResult = {
   cardType: string | null;
   cardTypeLabel: string | null;
   cardNumber: string | null;
+  responseCode: number | null;
 };
 
 export type ListEnrollmentsFilter = {

@@ -70,6 +70,27 @@ impl DeviceUserRepository {
         .map_err(DatabaseError::Query)
     }
 
+    pub async fn find_by_device_and_ref(
+        &self,
+        device_id: Uuid,
+        matrix_ref_user_id: i64,
+    ) -> Result<Option<DeviceUserRecord>, DatabaseError> {
+        sqlx::query_as::<_, DeviceUserRecord>(
+            r#"
+            SELECT
+                id, user_id, device_id, matrix_user_id, matrix_ref_user_id,
+                provisioned_at, created_at, updated_at
+            FROM device_users
+            WHERE device_id = $1 AND matrix_ref_user_id = $2
+            "#,
+        )
+        .bind(device_id)
+        .bind(matrix_ref_user_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(DatabaseError::Query)
+    }
+
     /// Atomically: return existing mapping, or lock sequence, allocate ids, insert.
     pub async fn ensure_mapping(
         &self,

@@ -9,7 +9,7 @@ pub mod credentials;
 pub mod device_users;
 pub mod devices;
 pub mod enrollments;
-mod events;
+pub mod events;
 mod licensing;
 pub mod synchronization;
 pub mod user_devices;

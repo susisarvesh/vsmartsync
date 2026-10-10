@@ -20,7 +20,7 @@ pub use service::{
 };
 pub use session::{
     cancel_enrollment_session, get_enrollment_session, CardRead, CardReaderStatus, CardTestResult,
-    EnrollmentSession, EnrollmentSessionStatus,
+    EnrollmentSession, EnrollmentSessionStatus, ReaderSlotStatus,
 };
 
 mod hardware;

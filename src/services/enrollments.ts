@@ -169,22 +169,22 @@ export function enrollmentErrorMessage(code: string): string {
       return "PostgreSQL is not connected.";
     default:
       if (code === "MATRIX_API_ERROR:16") {
-        return "The Matrix device is currently busy with another operation.";
+        return "The Matrix reader is currently busy.";
       }
       if (code === "MATRIX_API_ERROR:26") {
         return "The card read parameters do not apply to this card type.";
       }
       if (code === "MATRIX_API_ERROR:27") {
-        return "Card was not detected before the enrollment/read timeout.";
+        return "Matrix did not detect a card before timeout.";
       }
       if (code === "MATRIX_API_ERROR:28") {
-        return "The device detected a card but could not read it. Check card placement, card technology, and card configuration.";
+        return "Matrix failed to read the card.";
       }
       if (code === "MATRIX_API_ERROR:29") {
-        return "Wrong card type. The card does not match the reader configured on this device.";
+        return "The presented card type does not match the configured Matrix reader.";
       }
       if (code === "MATRIX_API_ERROR:30") {
-        return "The card could not be read because its configured security key does not match the device configuration.";
+        return "Key mismatch.";
       }
       if (code.startsWith("MATRIX_API_ERROR:")) {
         return `The device refused enrollment (code ${code.slice("MATRIX_API_ERROR:".length)}).`;

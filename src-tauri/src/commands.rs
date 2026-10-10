@@ -5,8 +5,8 @@
 
 use crate::common::{app_info, AppInfo, DevicePasswordVault, SecretVault};
 use crate::database::repositories::{
-    CredentialRepository, DeviceRepository, DeviceUserRepository, EnrollmentRepository,
-    EnrollmentSessionRepository, UserDeviceRepository, UserRepository,
+    AccessEventRepository, CredentialRepository, DeviceRepository, DeviceUserRepository,
+    EnrollmentRepository, EnrollmentSessionRepository, UserDeviceRepository, UserRepository,
 };
 use crate::database::{DatabaseRuntime, DatabaseStatus};
 use crate::domains::credentials::{self, Credential, CredentialError, CredentialListFilter};
@@ -15,6 +15,7 @@ use crate::domains::enrollments::{
     self, CardRead, CardReaderStatus, CardTestResult, DeviceEnrollmentGate,
     DeviceEnrollmentOptions, Enrollment, EnrollmentError, EnrollmentListFilter, EnrollmentSession,
 };
+use crate::domains::events::{self, AccessEvent, EventError, FetchDeviceEventsResult};
 use crate::domains::synchronization::{self, SyncError, SyncUsersResult};
 use crate::domains::user_devices::{self, UserDeviceAssignment, UserDeviceError, UserOnDevice};
 use crate::domains::users::{self, User, UserError};
@@ -782,6 +783,57 @@ fn users_repo(runtime: &DatabaseRuntime) -> Result<UserRepository, String> {
         .pool()
         .ok_or_else(|| user_error_to_command(UserError::Unavailable))?;
     Ok(UserRepository::new(pool))
+}
+
+#[tauri::command]
+pub async fn list_access_events(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    device_id: Option<Uuid>,
+    limit: Option<i64>,
+) -> Result<Vec<AccessEvent>, String> {
+    tracing::info!(command = "list_access_events", "frontend invoked rust");
+    let pool = event_pool(&runtime)?;
+    events::list_access_events(&AccessEventRepository::new(pool), device_id, limit)
+        .await
+        .map_err(event_error_to_command)
+}
+
+#[tauri::command]
+pub async fn fetch_device_events(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    gate: tauri::State<'_, DeviceEnrollmentGate>,
+    device_id: Uuid,
+) -> Result<FetchDeviceEventsResult, String> {
+    tracing::info!(
+        command = "fetch_device_events",
+        device_id = %device_id,
+        "frontend invoked rust"
+    );
+    let pool = event_pool(&runtime)?;
+    let vault = DevicePasswordVault::open().map_err(secret_error_to_command)?;
+    let matrix = MatrixAdapter::new().map_err(|_| EventError::Offline.to_string())?;
+    events::fetch_device_events(
+        &DeviceRepository::new(pool.clone()),
+        &AccessEventRepository::new(pool.clone()),
+        &DeviceUserRepository::new(pool.clone()),
+        &UserRepository::new(pool),
+        &vault,
+        &matrix,
+        &gate,
+        device_id,
+    )
+    .await
+    .map_err(event_error_to_command)
+}
+
+fn event_pool(runtime: &DatabaseRuntime) -> Result<crate::database::DbPool, String> {
+    runtime
+        .pool()
+        .ok_or_else(|| event_error_to_command(EventError::Unavailable))
+}
+
+fn event_error_to_command(error: EventError) -> String {
+    error.to_string()
 }
 
 fn devices_repo(runtime: &DatabaseRuntime) -> Result<DeviceRepository, String> {

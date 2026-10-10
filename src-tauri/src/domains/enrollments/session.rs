@@ -154,6 +154,16 @@ pub struct CardRead {
     pub card_number: Option<String>,
 }
 
+/// One interface reported by `reader-config?action=get`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReaderSlotStatus {
+    pub slot: String,
+    pub code: i32,
+    pub label: String,
+    pub family: Option<String>,
+}
+
 /// Reader and smart-card configuration. No keys and no card number.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -162,6 +172,9 @@ pub struct CardReaderStatus {
     pub reader: Option<String>,
     pub reader_label: Option<String>,
     pub reader_code: Option<i32>,
+    /// Every configured reader from `reader-config`, in slot order.
+    pub readers: Vec<ReaderSlotStatus>,
+    pub door_access_mode: Option<i32>,
     pub supported: bool,
     pub card_type: Option<String>,
     pub card_type_label: Option<String>,
@@ -170,6 +183,8 @@ pub struct CardReaderStatus {
     pub mifare_custom_key_enabled: bool,
     pub hid_iclass_custom_key_enabled: bool,
     pub card_custom_key_auto_update: bool,
+    pub read_csn: Option<String>,
+    pub max_card_bits: Option<u32>,
     pub message: String,
 }
 
@@ -186,6 +201,7 @@ pub struct CardTestResult {
     pub card_type: Option<String>,
     pub card_type_label: Option<String>,
     pub card_number: Option<String>,
+    pub response_code: Option<i32>,
 }
 
 pub async fn get_enrollment_session(

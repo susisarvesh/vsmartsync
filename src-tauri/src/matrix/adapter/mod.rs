@@ -15,6 +15,10 @@ use crate::matrix::enrollment::{
     reported_enrollment, CredentialCounts, HardwareEnrollType, ParsedCardCredential,
     ParsedCardRead, ReportedEnrollment,
 };
+use crate::matrix::events::{
+    parse_device_events, parse_event_count, response_markers, EventBody, EventCount,
+    ParsedDeviceEvent, EVENT_BATCH_SIZE,
+};
 
 /// Reachability probe errors (Devices domain). Subset of transport failures.
 #[derive(Debug, PartialEq, Eq)]
@@ -80,6 +84,7 @@ pub struct CardConfigDocuments {
     pub basic: String,
     pub reader: String,
     pub smart_card_format: Option<String>,
+    pub internal_card_format: Option<String>,
 }
 
 impl MatrixAdapter {
@@ -290,10 +295,25 @@ impl MatrixAdapter {
                 None
             }
         };
+        let internal_card_format = match self
+            .client
+            .get_internal_card_format(host, port, username, password)
+            .await
+        {
+            Ok(body) => Some(body.body),
+            Err(error) => {
+                tracing::warn!(
+                    error = %map_adapter_error(error),
+                    "internal card format was not returned"
+                );
+                None
+            }
+        };
         Ok(CardConfigDocuments {
             basic: basic.body,
             reader: reader.body,
             smart_card_format,
+            internal_card_format,
         })
     }
 
@@ -341,27 +361,27 @@ impl MatrixAdapter {
     }
 
     /// Face-only doors do not open a card prompt. Card & Face keeps face and
-    /// allows read-only card enrollment.
+    /// allows read-only card enrollment. Returns the reader configuration.
     pub async fn enable_card_and_face_access(
         &self,
         host: &str,
         port: u16,
         username: &str,
         password: &str,
-    ) -> Result<(), MatrixAdapterError> {
+    ) -> Result<String, MatrixAdapterError> {
         let reader = self
             .client
             .get_reader_config(host, port, username, password)
             .await
             .map_err(map_adapter_error)?;
         if !face_only_door(&reader.body) {
-            return Ok(());
+            return Ok(reader.body);
         }
         tracing::info!("door access mode is face only; setting card and face for card enrollment");
         self.client
             .set_door_access_mode(host, port, username, password, "16")
             .await
-            .map(|_| ())
+            .map(|_| reader.body)
             .map_err(map_adapter_error)
     }
 
@@ -436,6 +456,65 @@ impl MatrixAdapter {
         primary
             .map(|body| credential_counts(&body.body))
             .map_err(map_adapter_error)
+    }
+
+    /// Current event sequence and rollover. This does not return event rows.
+    pub async fn event_count(
+        &self,
+        host: &str,
+        port: u16,
+        username: &str,
+        password: &str,
+    ) -> Result<EventCount, MatrixAdapterError> {
+        let body = self
+            .client
+            .get_event_count(host, port, username, password)
+            .await
+            .map_err(map_adapter_error)?;
+        parse_event_count(&body.body).ok_or_else(|| {
+            tracing::warn!(
+                shape = %response_markers(&body.body),
+                "event count body was not usable"
+            );
+            MatrixAdapterError::BadResponse
+        })
+    }
+
+    /// One documented `events?action=getevent` batch. An empty vec means the
+    /// device returned success with no event records.
+    pub async fn device_events(
+        &self,
+        host: &str,
+        port: u16,
+        username: &str,
+        password: &str,
+        roll_over_count: i64,
+        seq_number: i64,
+    ) -> Result<Vec<ParsedDeviceEvent>, MatrixAdapterError> {
+        let body = self
+            .client
+            .get_events(
+                host,
+                port,
+                username,
+                password,
+                &roll_over_count.to_string(),
+                &seq_number.to_string(),
+                &EVENT_BATCH_SIZE.to_string(),
+            )
+            .await
+            .map_err(map_adapter_error)?;
+        match parse_device_events(&body.body) {
+            EventBody::Events(events) => Ok(events),
+            EventBody::Empty => Ok(Vec::new()),
+            EventBody::Unreadable => {
+                tracing::warn!(
+                    shape = %response_markers(&body.body),
+                    "event batch body was not usable"
+                );
+                Err(MatrixAdapterError::BadResponse)
+            }
+        }
     }
 }
 

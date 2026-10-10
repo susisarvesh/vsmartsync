@@ -3,7 +3,8 @@ export type AppRoute =
   | "users"
   | "assign-device"
   | "devices"
-  | "credentials";
+  | "credentials"
+  | "access-logs";
 
 export const NAV_ITEMS: Array<{
   id: AppRoute;
@@ -34,5 +35,10 @@ export const NAV_ITEMS: Array<{
     id: "credentials",
     label: "Credentials",
     description: "Credentials for a user, including enrollment on a device",
+  },
+  {
+    id: "access-logs",
+    label: "Access logs",
+    description: "Card and face entries reported by a device",
   },
 ];

@@ -106,6 +106,25 @@ impl HardwareEnrollType {
     }
 }
 
+/// Command actually sent to `enrolluser`.
+///
+/// An HID iCLASS reader on this firmware reads the card serial. `enrolluser`
+/// type 1 waits for a smart-card capture that does not start, and the call
+/// times out. Type 0 is the documented card enrollment and matches that read.
+/// A MIFARE reader keeps type 1.
+pub fn capture_enroll_type(
+    requested: HardwareEnrollType,
+    reader_config: &str,
+) -> HardwareEnrollType {
+    let iclass = configured_reader(reader_config).and_then(|reader| reader.family)
+        == Some(CardReaderFamily::HidIclass);
+    if requested == HardwareEnrollType::SmartCard && iclass {
+        HardwareEnrollType::ReadOnlyCard
+    } else {
+        requested
+    }
+}
+
 /// Types the device configuration reports as available, in display order.
 pub fn supported_enroll_types(
     basic_config: &str,
@@ -124,7 +143,14 @@ pub fn supported_enroll_types(
     } else {
         card_support(reader_config, enroll_options)
     };
-    if !face200t
+    // Reader1 3, 4, and 5 are smart-card readers. Door mode must not turn
+    // that into a read-only (EM/HID Prox) enrollment.
+    let reader1_is_smart = config_field(reader_config, "reader1")
+        .and_then(|raw| raw.parse::<i32>().ok())
+        .is_some_and(|code| matches!(code, 3..=5));
+    if reader1_is_smart {
+        read_only_card = false;
+    } else if !face200t
         && (face_capacity || matches!(access_mode, Some(0 | 2 | 4 | 5 | 6 | 9 | 10 | 12 | 16 | 20)))
     {
         read_only_card = true;
@@ -408,14 +434,16 @@ impl CardReaderFamily {
         }
     }
 
-    /// EM Prox and HID Prox are 125 kHz readers. `card-read-write` is the
-    /// smart-card read and does not see a card on these antennas.
-    pub fn is_proximity(self) -> bool {
-        matches!(self, Self::EmProx | Self::HidProx)
+    /// `card-read-write` is the smart-card read. EM Prox and HID Prox are not
+    /// those readers, and this firmware answers that call with response code 27.
+    pub fn uses_card_read(self) -> bool {
+        matches!(self, Self::Mifare | Self::HidIclass)
     }
 
     /// Card types the guide associates with this reader. DESFire types are the
     /// documented MIFARE card-type codes. Read-only is EM Prox and HID Prox.
+    /// An HID iCLASS reader also returns card-type 9 when it reads the card
+    /// serial (CSN). That card enrolls, so it is a successful read.
     pub fn accepts(self, card: MatrixCardType) -> bool {
         match self {
             Self::EmProx | Self::HidProx => card == MatrixCardType::ReadOnly,
@@ -432,12 +460,63 @@ impl CardReaderFamily {
                 MatrixCardType::IClass2K2
                     | MatrixCardType::IClass16K2
                     | MatrixCardType::IClass16K16
+                    | MatrixCardType::ReadOnly
             ),
         }
     }
 }
 
-/// First configured reader from `reader-config`. Reader 1 is preferred.
+/// One configured interface from `reader-config?action=get`.
+///
+/// Reader 1 and reader 2 use the same type codes: `2` is HID, `3` is MIFARE.
+/// Reader 3 uses its own table. Code `0` is not a configured reader.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReportedReaderSlot {
+    pub slot: &'static str,
+    pub code: i32,
+    pub label: &'static str,
+    pub family: Option<CardReaderFamily>,
+}
+
+/// `door-access-mode` from `reader-config`. Absent when the device did not report it.
+pub fn door_access_mode(reader_config: &str) -> Option<i32> {
+    config_field(reader_config, "door-access-mode").and_then(|raw| raw.parse().ok())
+}
+
+/// Card-format view of `reader-config`. Order is reader 1, reader 2, reader 3.
+pub fn reader_slots(reader_config: &str) -> Vec<ReportedReaderSlot> {
+    let mut slots = Vec::new();
+    push_entry_reader(&mut slots, reader_config, "reader1");
+    push_entry_reader(&mut slots, reader_config, "reader2");
+    if let Some(code) = config_field(reader_config, "reader3").and_then(|raw| raw.parse().ok()) {
+        if let Some(label) = reader3_label(code) {
+            slots.push(ReportedReaderSlot {
+                slot: "reader3",
+                code,
+                label,
+                family: reader3_family(code),
+            });
+        }
+    }
+    slots
+}
+
+fn push_entry_reader(slots: &mut Vec<ReportedReaderSlot>, reader_config: &str, slot: &'static str) {
+    let Some(code) = config_field(reader_config, slot).and_then(|raw| raw.parse().ok()) else {
+        return;
+    };
+    let Some(label) = reader1_label(code) else {
+        return;
+    };
+    slots.push(ReportedReaderSlot {
+        slot,
+        code,
+        label,
+        family: reader1_family(code),
+    });
+}
+
+/// First card reader from `reader-config`. Reader 1 is preferred, then reader 2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConfiguredReader {
     pub code: i32,
@@ -446,35 +525,20 @@ pub struct ConfiguredReader {
 }
 
 pub fn configured_reader(reader_config: &str) -> Option<ConfiguredReader> {
-    if let Some(code) = config_field(reader_config, "reader1").and_then(|raw| raw.parse().ok()) {
-        if let Some(label) = reader1_label(code) {
-            return Some(ConfiguredReader {
-                code,
-                label,
-                family: reader1_family(code),
-            });
-        }
-    }
-    if let Some(code) = config_field(reader_config, "reader3").and_then(|raw| raw.parse().ok()) {
-        if let Some(label) = reader3_label(code) {
-            return Some(ConfiguredReader {
-                code,
-                label,
-                family: reader3_family(code),
-            });
-        }
-    }
-    None
+    let slots = reader_slots(reader_config);
+    let chosen = slots
+        .iter()
+        .find(|slot| slot.family.is_some())
+        .or_else(|| slots.first());
+    chosen.map(|slot| ConfiguredReader {
+        code: slot.code,
+        label: slot.label,
+        family: slot.family,
+    })
 }
 
 fn reader1_family(value: i32) -> Option<CardReaderFamily> {
-    match value {
-        1 => Some(CardReaderFamily::EmProx),
-        2 => Some(CardReaderFamily::HidProx),
-        3 => Some(CardReaderFamily::Mifare),
-        4 | 5 => Some(CardReaderFamily::HidIclass),
-        _ => None,
-    }
+    ReaderType::from_reader1(value).and_then(ReaderType::family)
 }
 
 fn reader3_family(value: i32) -> Option<CardReaderFamily> {
@@ -487,11 +551,169 @@ fn reader3_family(value: i32) -> Option<CardReaderFamily> {
     }
 }
 
+/// Documented `reader1` codes. `None` is code 0 and is not a configured reader.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReaderType {
+    None,
+    EmProx,
+    HidProx,
+    Mifare,
+    HidIclassU,
+    HidIclassW,
+}
+
+impl ReaderType {
+    pub fn from_reader1(code: i32) -> Option<Self> {
+        match code {
+            0 => Some(Self::None),
+            1 => Some(Self::EmProx),
+            2 => Some(Self::HidProx),
+            3 => Some(Self::Mifare),
+            4 => Some(Self::HidIclassU),
+            5 => Some(Self::HidIclassW),
+            _ => None,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "None",
+            Self::EmProx => "EM Prox Reader",
+            Self::HidProx => "HID Prox Reader",
+            Self::Mifare => "MiFare Reader",
+            Self::HidIclassU => "HID iCLASS-U Reader",
+            Self::HidIclassW => "HID iCLASS-W Reader",
+        }
+    }
+
+    pub fn family(self) -> Option<CardReaderFamily> {
+        match self {
+            Self::None => None,
+            Self::EmProx => Some(CardReaderFamily::EmProx),
+            Self::HidProx => Some(CardReaderFamily::HidProx),
+            Self::Mifare => Some(CardReaderFamily::Mifare),
+            Self::HidIclassU | Self::HidIclassW => Some(CardReaderFamily::HidIclass),
+        }
+    }
+}
+
+/// MIFARE card types returned by `card-read-write` and `smart-card-format`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MifareCardType {
+    Mifare1K,
+    Mifare4K,
+}
+
+impl MifareCardType {
+    pub fn from_matrix(card: MatrixCardType) -> Option<Self> {
+        match card {
+            MatrixCardType::Mifare1K => Some(Self::Mifare1K),
+            MatrixCardType::Mifare4K => Some(Self::Mifare4K),
+            _ => None,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Mifare1K => "Mifare 1K",
+            Self::Mifare4K => "Mifare 4K",
+        }
+    }
+}
+
+/// `smart-card-format` `card-no`: how the reader builds the card number.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CardNumberMode {
+    Csn,
+    Uid,
+    Custom,
+}
+
+impl From<MatrixIdentifierType> for CardNumberMode {
+    fn from(value: MatrixIdentifierType) -> Self {
+        match value {
+            MatrixIdentifierType::Csn => Self::Csn,
+            MatrixIdentifierType::Uid => Self::Uid,
+            MatrixIdentifierType::Custom => Self::Custom,
+        }
+    }
+}
+
+impl CardNumberMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Csn => "csn",
+            Self::Uid => "uid",
+            Self::Custom => "custom",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Csn => "CSN",
+            Self::Uid => "UID",
+            Self::Custom => "Custom",
+        }
+    }
+}
+
+/// `card-read-write` response codes used by the card diagnostic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatrixCardReadResponseCode {
+    Success,
+    DeviceBusy,
+    Timeout,
+    ReadWriteFailed,
+    WrongCardType,
+    KeyMismatch,
+}
+
+impl MatrixCardReadResponseCode {
+    pub fn from_code(code: i32) -> Option<Self> {
+        match code {
+            0 => Some(Self::Success),
+            16 => Some(Self::DeviceBusy),
+            27 => Some(Self::Timeout),
+            28 => Some(Self::ReadWriteFailed),
+            29 => Some(Self::WrongCardType),
+            30 => Some(Self::KeyMismatch),
+            _ => None,
+        }
+    }
+
+    pub fn code(self) -> i32 {
+        match self {
+            Self::Success => 0,
+            Self::DeviceBusy => 16,
+            Self::Timeout => 27,
+            Self::ReadWriteFailed => 28,
+            Self::WrongCardType => 29,
+            Self::KeyMismatch => 30,
+        }
+    }
+
+    pub fn message(self, reader: Option<CardReaderFamily>) -> &'static str {
+        match self {
+            Self::Success => "Card successfully detected.",
+            Self::DeviceBusy => "The Matrix reader is currently busy.",
+            Self::Timeout => "Matrix did not detect a card before timeout.",
+            Self::ReadWriteFailed => "Matrix failed to read the card.",
+            Self::WrongCardType => {
+                "The presented card type does not match the configured Matrix reader."
+            }
+            Self::KeyMismatch if reader == Some(CardReaderFamily::Mifare) => "MIFARE key mismatch.",
+            Self::KeyMismatch => "Key mismatch.",
+        }
+    }
+}
+
 /// `smart-card-format?action=get`. `card-no` here is the identifier mode, not a card number.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SmartCardFormat {
     pub card_type: Option<MatrixCardType>,
-    pub identifier: Option<MatrixIdentifierType>,
+    pub identifier: Option<CardNumberMode>,
+    /// Device `read-csn` value when it is a short numeric flag. Not a card number.
+    pub read_csn: Option<String>,
 }
 
 pub fn parse_smart_card_format(body: &str) -> SmartCardFormat {
@@ -499,8 +721,59 @@ pub fn parse_smart_card_format(body: &str) -> SmartCardFormat {
         card_type: config_field(body, "card-type")
             .and_then(|raw| raw.parse::<i32>().ok())
             .and_then(MatrixCardType::from_code),
-        identifier: config_field(body, "card-no").and_then(|raw| MatrixIdentifierType::parse(&raw)),
+        identifier: config_field(body, "card-no")
+            .and_then(|raw| MatrixIdentifierType::parse(&raw))
+            .map(CardNumberMode::from),
+        read_csn: short_numeric_field(body, "read-csn"),
     }
+}
+
+/// `internal-card-format?action=get`. Values are what the device reports.
+/// Nothing here is written back, and bit width is not turned into a card rule.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct InternalCardFormat {
+    pub format_id: Option<String>,
+    pub max_no_of_bits: Option<u32>,
+    pub card_structure: Option<String>,
+    pub card_read_order: Option<String>,
+    pub include_facility_code: Option<String>,
+    pub seq_of_operation: Option<String>,
+}
+
+pub fn parse_internal_card_format(body: &str) -> InternalCardFormat {
+    InternalCardFormat {
+        format_id: short_config_value(body, "format-id"),
+        max_no_of_bits: config_field(body, "max-no-of-bits").and_then(|raw| raw.parse().ok()),
+        card_structure: short_config_value(body, "card-structure"),
+        card_read_order: short_config_value(body, "card-read-order"),
+        include_facility_code: short_config_value(body, "include-facility-code"),
+        seq_of_operation: short_config_value(body, "seq-of-operation"),
+    }
+}
+
+fn short_numeric_field(body: &str, key: &str) -> Option<String> {
+    let value = config_field(body, key)?;
+    let trimmed = value.trim();
+    if !trimmed.is_empty() && trimmed.len() <= 8 && trimmed.chars().all(|ch| ch.is_ascii_digit()) {
+        Some(trimmed.to_string())
+    } else {
+        None
+    }
+}
+
+fn short_config_value(body: &str, key: &str) -> Option<String> {
+    let value = config_field(body, key)?;
+    let trimmed = value.trim();
+    if trimmed.is_empty()
+        || trimmed.len() > 32
+        || trimmed.to_ascii_lowercase().contains("key")
+        || !trimmed
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+    {
+        return None;
+    }
+    Some(trimmed.to_string())
 }
 
 /// Enable flags only. Key material is never copied out of the device body.
@@ -534,8 +807,8 @@ pub enum CardReadAttempt {
     BadResponse,
     /// Reader configuration already decided the test. The reader was not opened.
     NotAttempted,
-    /// EM Prox or HID Prox. The smart-card read was not sent.
-    ProximityReader,
+    /// EM Prox or HID Prox. `card-read-write` was not sent.
+    DirectEnrollment,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -549,6 +822,7 @@ pub struct CardTestReport {
     pub card_type: Option<String>,
     pub card_type_label: Option<String>,
     pub card_number: Option<String>,
+    pub response_code: Option<i32>,
 }
 
 pub fn diagnose_card_read(reader_config: &str, attempt: CardReadAttempt) -> CardTestReport {
@@ -567,6 +841,7 @@ pub fn diagnose_card_read(reader_config: &str, attempt: CardReadAttempt) -> Card
         card_type: None,
         card_type_label: None,
         card_number: None,
+        response_code: None,
     };
     let Some(reader) = reader else {
         return base(
@@ -584,17 +859,17 @@ pub fn diagnose_card_read(reader_config: &str, attempt: CardReadAttempt) -> Card
         );
     }
     match attempt {
-        CardReadAttempt::ProximityReader => base(
-            "proximity",
+        CardReadAttempt::DirectEnrollment => base(
+            "enroll_on_device",
             format!(
-                "This is a {}. It reads a proximity card when enrollment starts. Click Enroll on device, then hold the card flat on the reader on the door.",
+                "This device reports {}. The smart-card read does not detect a card on that setting. Click Enroll on device, then hold the card on the reader.",
                 reader.label
             ),
             true,
         ),
         CardReadAttempt::TimedOut => base(
             "timeout",
-            "Card was not detected before the enrollment/read timeout.".to_string(),
+            "Matrix did not detect a card before timeout.".to_string(),
             false,
         ),
         CardReadAttempt::Unreachable => base(
@@ -612,43 +887,48 @@ pub fn diagnose_card_read(reader_config: &str, attempt: CardReadAttempt) -> Card
             "The device returned an unexpected response.".to_string(),
             false,
         ),
-        CardReadAttempt::DeviceCode(16) => base(
-            "device_busy",
-            "The Matrix device is currently busy with another operation.".to_string(),
-            false,
-        ),
-        CardReadAttempt::DeviceCode(26) => base(
-            "parameters_not_applicable",
-            "The card read parameters do not apply to this card type.".to_string(),
-            false,
-        ),
-        CardReadAttempt::DeviceCode(27) => base(
-            "timeout",
-            "Card was not detected before the enrollment/read timeout.".to_string(),
-            false,
-        ),
-        CardReadAttempt::DeviceCode(28) => base(
-            "read_failed",
-            "The device detected a card but could not read it. Check card placement, card technology, and card configuration.".to_string(),
-            false,
-        ),
-        CardReadAttempt::DeviceCode(29) => base(
-            "wrong_card_type",
-            "Wrong card type. The card does not match the reader configured on this device.".to_string(),
-            false,
-        ),
-        CardReadAttempt::DeviceCode(30) => base(
-            "key_mismatch",
-            "The card could not be read because its configured security key does not match the device configuration.".to_string(),
-            false,
-        ),
-        CardReadAttempt::DeviceCode(_) | CardReadAttempt::NotAttempted => base(
+        CardReadAttempt::DeviceCode(26) => {
+            let mut report = base(
+                "parameters_not_applicable",
+                "The card read parameters do not apply to this card type.".to_string(),
+                false,
+            );
+            report.response_code = Some(26);
+            report
+        }
+        CardReadAttempt::DeviceCode(code) => {
+            let (outcome, message) = match MatrixCardReadResponseCode::from_code(code) {
+                Some(known) => (
+                    match known {
+                        MatrixCardReadResponseCode::DeviceBusy => "device_busy",
+                        MatrixCardReadResponseCode::Timeout => "timeout",
+                        MatrixCardReadResponseCode::ReadWriteFailed => "read_failed",
+                        MatrixCardReadResponseCode::WrongCardType => "wrong_card_type",
+                        MatrixCardReadResponseCode::KeyMismatch => "key_mismatch",
+                        MatrixCardReadResponseCode::Success => "bad_response",
+                    },
+                    known.message(reader.family).to_string(),
+                ),
+                None => (
+                    "bad_response",
+                    format!("The device returned Matrix response code {code}."),
+                ),
+            };
+            let mut report = base(outcome, message, false);
+            report.response_code = Some(code);
+            report
+        }
+        CardReadAttempt::NotAttempted => base(
             "bad_response",
             "The device returned an unexpected response.".to_string(),
             false,
         ),
         CardReadAttempt::Read(parsed) => {
-            let card_label = parsed.card_type.map(|value| value.label().to_string());
+            let card_label = parsed.card_type.map(|value| {
+                MifareCardType::from_matrix(value)
+                    .map(|kind| kind.label().to_string())
+                    .unwrap_or_else(|| value.label().to_string())
+            });
             let card_type = parsed.card_type.map(|value| value.as_str().to_string());
             let Some(card) = parsed.card_type else {
                 let mut report = base(
@@ -679,6 +959,7 @@ pub fn diagnose_card_read(reader_config: &str, attempt: CardReadAttempt) -> Card
             report.card_type = card_type;
             report.card_type_label = card_label;
             report.card_number = parsed.card_number;
+            report.response_code = Some(MatrixCardReadResponseCode::Success.code());
             report
         }
     }
@@ -686,24 +967,16 @@ pub fn diagnose_card_read(reader_config: &str, attempt: CardReadAttempt) -> Card
 
 /// Human label for the first configured reader. `None` means no reader was reported.
 pub fn reader_label(reader_config: &str) -> Option<String> {
-    let reader1 = config_field(reader_config, "reader1")
-        .and_then(|raw| raw.parse::<i32>().ok())
-        .and_then(reader1_label);
-    let reader3 = config_field(reader_config, "reader3")
-        .and_then(|raw| raw.parse::<i32>().ok())
-        .and_then(reader3_label);
-    reader1.or(reader3).map(str::to_string)
+    reader_slots(reader_config)
+        .into_iter()
+        .next()
+        .map(|slot| slot.label.to_string())
 }
 
 fn reader1_label(value: i32) -> Option<&'static str> {
-    match value {
-        1 => Some("EM Prox Reader"),
-        2 => Some("HID Prox Reader"),
-        3 => Some("MiFare Reader"),
-        4 => Some("HID iCLASS-U Reader"),
-        5 => Some("HID iCLASS-W Reader"),
-        _ => None,
-    }
+    ReaderType::from_reader1(value)
+        .filter(|kind| *kind != ReaderType::None)
+        .map(ReaderType::label)
 }
 
 fn reader3_label(value: i32) -> Option<&'static str> {
@@ -853,11 +1126,39 @@ mod tests {
     }
 
     #[test]
+    fn iclass_card_enrollment_uses_the_read_only_command() {
+        assert_eq!(
+            super::capture_enroll_type(
+                HardwareEnrollType::SmartCard,
+                "reader1=4 door-access-mode=6"
+            ),
+            HardwareEnrollType::ReadOnlyCard
+        );
+        assert_eq!(HardwareEnrollType::ReadOnlyCard.matrix_type(), 0);
+        assert_eq!(
+            super::capture_enroll_type(HardwareEnrollType::SmartCard, "reader1=3"),
+            HardwareEnrollType::SmartCard
+        );
+        assert_eq!(
+            super::capture_enroll_type(HardwareEnrollType::Face, "reader1=4"),
+            HardwareEnrollType::Face
+        );
+    }
+
+    #[test]
     fn mifare_reader_is_smart_card() {
         let types = supported_enroll_types("max-fingers=0", "reader1=3", "");
         assert!(types.contains(&HardwareEnrollType::SmartCard));
         assert!(!types.contains(&HardwareEnrollType::ReadOnlyCard));
         assert!(types.contains(&HardwareEnrollType::BiometricThenCard));
+        let with_face = supported_enroll_types(
+            "<max-faces>9</max-faces>",
+            "reader1=3 door-access-mode=6",
+            "enroll-card-count=0",
+        );
+        assert!(with_face.contains(&HardwareEnrollType::SmartCard));
+        assert!(with_face.contains(&HardwareEnrollType::Face));
+        assert!(!with_face.contains(&HardwareEnrollType::ReadOnlyCard));
     }
 
     #[test]
@@ -960,6 +1261,23 @@ mod tests {
         assert_eq!(reader_label("reader3=1").as_deref(), Some("EM Prox Reader"));
         assert!(reader_label("reader1=0").is_none());
 
+        let slots = super::reader_slots("reader1=3 reader2=2 reader3=1 door-access-mode=6");
+        assert_eq!(slots.len(), 3);
+        assert_eq!(slots[0].slot, "reader1");
+        assert_eq!(slots[0].code, 3);
+        assert_eq!(slots[0].family, Some(super::CardReaderFamily::Mifare));
+        assert_eq!(slots[1].slot, "reader2");
+        assert_eq!(slots[1].code, 2);
+        assert_eq!(slots[1].family, Some(super::CardReaderFamily::HidProx));
+        assert_eq!(slots[2].slot, "reader3");
+        assert_eq!(slots[2].code, 1);
+        assert_eq!(
+            super::configured_reader("reader1=0 reader2=2")
+                .unwrap()
+                .family,
+            Some(super::CardReaderFamily::HidProx)
+        );
+
         let parsed =
             parse_card_credential("Response-Code=0 card1=12345678 card-type=4 identifier-type=csn");
         assert_eq!(parsed.card_number.as_deref(), Some("12345678"));
@@ -983,8 +1301,9 @@ mod tests {
     #[test]
     fn reader_family_and_card_compatibility() {
         use super::{
-            diagnose_card_read, parse_card_key_flags, parse_smart_card_format, CardReadAttempt,
-            CardReaderFamily, MatrixCardType, ParsedCardRead,
+            configured_reader, diagnose_card_read, parse_card_key_flags,
+            parse_internal_card_format, parse_smart_card_format, CardNumberMode, CardReadAttempt,
+            CardReaderFamily, MatrixCardType, ParsedCardRead, ReaderType,
         };
         assert_eq!(
             super::configured_reader("reader1=3").unwrap().family,
@@ -1001,13 +1320,14 @@ mod tests {
         assert!(CardReaderFamily::Mifare.accepts(MatrixCardType::MifareDesfire4K));
         assert!(!CardReaderFamily::Mifare.accepts(MatrixCardType::IClass2K2));
         assert!(CardReaderFamily::HidIclass.accepts(MatrixCardType::IClass16K16));
+        assert!(CardReaderFamily::HidIclass.accepts(MatrixCardType::ReadOnly));
         assert!(!CardReaderFamily::HidIclass.accepts(MatrixCardType::Mifare1K));
         assert!(CardReaderFamily::EmProx.accepts(MatrixCardType::ReadOnly));
         assert!(!CardReaderFamily::HidProx.accepts(MatrixCardType::Mifare1K));
 
         let format = parse_smart_card_format("card-type=4 card-no=0");
         assert_eq!(format.card_type, Some(MatrixCardType::Mifare1K));
-        assert_eq!(format.identifier, Some(super::MatrixIdentifierType::Csn));
+        assert_eq!(format.identifier, Some(CardNumberMode::Csn));
         let flags = parse_card_key_flags(
             "mifare-custom-key-enable=1 hid-iclass-custom-key-enable=0 card-custom-key-auto-update=1 mifare-custom-key=SECRET",
         );
@@ -1045,6 +1365,44 @@ mod tests {
         );
         assert_eq!(reverse.outcome, "incompatible");
 
+        let iclass_csn = diagnose_card_read(
+            "reader1=4 door-access-mode=6",
+            CardReadAttempt::Read(ParsedCardRead {
+                card_number: Some("51579".to_string()),
+                card_type: Some(MatrixCardType::ReadOnly),
+            }),
+        );
+        assert_eq!(iclass_csn.outcome, "success");
+        assert!(iclass_csn.compatible);
+        assert_eq!(
+            iclass_csn.card_type_label.as_deref(),
+            Some("Read-only card")
+        );
+
+        assert_eq!(
+            diagnose_card_read("reader1=3", CardReadAttempt::DeviceCode(27)).message,
+            "Matrix did not detect a card before timeout."
+        );
+        assert_eq!(
+            diagnose_card_read("reader1=3", CardReadAttempt::DeviceCode(27)).response_code,
+            Some(27)
+        );
+        assert_eq!(
+            diagnose_card_read("reader1=3", CardReadAttempt::DeviceCode(28)).message,
+            "Matrix failed to read the card."
+        );
+        assert_eq!(
+            diagnose_card_read("reader1=3", CardReadAttempt::DeviceCode(29)).message,
+            "The presented card type does not match the configured Matrix reader."
+        );
+        assert_eq!(
+            diagnose_card_read("reader1=3", CardReadAttempt::DeviceCode(30)).message,
+            "MIFARE key mismatch."
+        );
+        assert_eq!(
+            diagnose_card_read("reader1=3", CardReadAttempt::DeviceCode(16)).message,
+            "The Matrix reader is currently busy."
+        );
         assert_eq!(
             diagnose_card_read("reader1=1", CardReadAttempt::DeviceCode(27)).outcome,
             "timeout"
@@ -1102,12 +1460,39 @@ mod tests {
         );
         assert_eq!(prox.outcome, "success");
         assert_eq!(prox.reader.as_deref(), Some("EM Prox"));
-        assert!(CardReaderFamily::EmProx.is_proximity());
-        assert!(CardReaderFamily::HidProx.is_proximity());
-        assert!(!CardReaderFamily::Mifare.is_proximity());
-        let proximity = diagnose_card_read("reader1=1", CardReadAttempt::ProximityReader);
-        assert_eq!(proximity.outcome, "proximity");
-        assert!(proximity.compatible);
-        assert!(proximity.message.contains("Enroll on device"));
+        assert!(!CardReaderFamily::EmProx.uses_card_read());
+        assert!(CardReaderFamily::Mifare.uses_card_read());
+        let direct = diagnose_card_read("reader1=1", CardReadAttempt::DirectEnrollment);
+        assert_eq!(direct.outcome, "enroll_on_device");
+        assert!(direct.message.contains("Enroll on device"));
+        assert_eq!(ReaderType::from_reader1(3), Some(ReaderType::Mifare));
+        assert_eq!(ReaderType::Mifare.label(), "MiFare Reader");
+        assert_eq!(
+            configured_reader("reader1=3").unwrap().family,
+            Some(CardReaderFamily::Mifare)
+        );
+        let mifare = diagnose_card_read(
+            "reader1=3",
+            CardReadAttempt::Read(ParsedCardRead {
+                card_number: Some("12345678".to_string()),
+                card_type: Some(MatrixCardType::Mifare1K),
+            }),
+        );
+        assert_eq!(mifare.outcome, "success");
+        assert_eq!(mifare.card_type_label.as_deref(), Some("Mifare 1K"));
+        assert_eq!(mifare.response_code, Some(0));
+        assert_eq!(mifare.reader_label.as_deref(), Some("MiFare Reader"));
+        let mifare_format = parse_smart_card_format(
+            "<card-type>5</card-type><card-no>1</card-no><read-csn>0</read-csn>",
+        );
+        assert_eq!(mifare_format.card_type, Some(MatrixCardType::Mifare4K));
+        assert_eq!(mifare_format.identifier, Some(CardNumberMode::Uid));
+        assert_eq!(mifare_format.read_csn.as_deref(), Some("0"));
+        let bits = parse_internal_card_format(
+            "<format-id>2</format-id><max-no-of-bits>56</max-no-of-bits><card-structure>1</card-structure><mifare-custom-key>secret</mifare-custom-key>",
+        );
+        assert_eq!(bits.max_no_of_bits, Some(56));
+        assert_eq!(bits.format_id.as_deref(), Some("2"));
+        assert!(bits.card_structure.is_some());
     }
 }

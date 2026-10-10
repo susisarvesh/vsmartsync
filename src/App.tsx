@@ -4,6 +4,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import { ToasterProvider } from "@/components/ui/toaster";
 import { useDatabaseStatus } from "@/hooks/useDatabaseStatus";
 import type { AppRoute } from "@/navigation";
+import { AccessLogsPage } from "@/pages/AccessLogsPage";
 import { AssignDevicePage } from "@/pages/AssignDevicePage";
 import { CredentialsPage } from "@/pages/CredentialsPage";
 import { DashboardPage } from "@/pages/DashboardPage";
@@ -72,6 +73,9 @@ function AppContent() {
       ) : null}
       {route === "credentials" ? (
         <CredentialsPage enabled={databaseConnected} />
+      ) : null}
+      {route === "access-logs" ? (
+        <AccessLogsPage enabled={databaseConnected} />
       ) : null}
     </AppShell>
   );

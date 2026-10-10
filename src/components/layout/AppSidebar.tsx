@@ -2,6 +2,7 @@ import {
   CreditCard,
   HardDrive,
   LayoutDashboard,
+  ScrollText,
   UserPlus,
   Users,
 } from "lucide-react";
@@ -14,6 +15,7 @@ const ICONS: Record<AppRoute, typeof LayoutDashboard> = {
   "assign-device": UserPlus,
   devices: HardDrive,
   credentials: CreditCard,
+  "access-logs": ScrollText,
 };
 
 type AppSidebarProps = {
@@ -71,7 +73,7 @@ export function AppSidebar({ route, onNavigate }: AppSidebarProps) {
       </nav>
       <div className="border-t border-border px-3 py-2.5">
         <p className="hidden text-[11px] text-muted-foreground sm:block">
-          Installed modules only. Sync and events appear here when available.
+          Installed modules only. Sync appears here when available.
         </p>
       </div>
     </aside>

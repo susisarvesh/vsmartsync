@@ -36,6 +36,20 @@ pub fn run() {
         .setup(|app| {
             app.manage(database::DatabaseRuntime::initialize());
             app.manage(domains::enrollments::DeviceEnrollmentGate::new());
+            let runtime =
+                database::DatabaseRuntime::clone(&app.state::<database::DatabaseRuntime>());
+            let gate = domains::enrollments::DeviceEnrollmentGate::clone(
+                &app.state::<domains::enrollments::DeviceEnrollmentGate>(),
+            );
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    let _ = tauri::async_runtime::spawn_blocking(|| {
+                        std::thread::sleep(std::time::Duration::from_secs(30));
+                    })
+                    .await;
+                    domains::events::poll_active_devices(&runtime, &gate).await;
+                }
+            });
 
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Regular);
@@ -83,7 +97,9 @@ pub fn run() {
             commands::cancel_device_enrollment_session,
             commands::read_card,
             commands::get_card_reader_status,
-            commands::test_card
+            commands::test_card,
+            commands::list_access_events,
+            commands::fetch_device_events
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -34,10 +34,12 @@ const READER_CONFIG_PATH: &str = "/device.cgi/reader-config";
 const ENROLL_OPTIONS_PATH: &str = "/device.cgi/enroll-options";
 const ENROLL_USER_PATH: &str = "/device.cgi/enrolluser";
 const COMMAND_PATH: &str = "/device.cgi/command";
+const EVENTS_PATH: &str = "/device.cgi/events";
 const USERS_PATH: &str = "/device.cgi/users";
 const CREDENTIAL_PATH: &str = "/device.cgi/credential";
 const CARD_READ_WRITE_PATH: &str = "/device.cgi/card-read-write";
 const SMART_CARD_FORMAT_PATH: &str = "/device.cgi/smart-card-format";
+const INTERNAL_CARD_FORMAT_PATH: &str = "/device.cgi/internal-card-format";
 const ENROLL_TIMEOUT: Duration = Duration::from_secs(90);
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -151,6 +153,20 @@ impl MatrixHttpClient {
             .await
     }
 
+    /// GET /device.cgi/internal-card-format?action=get
+    ///
+    /// Read-only. The reported bit width is not applied back to the device.
+    pub async fn get_internal_card_format(
+        &self,
+        host: &str,
+        port: u16,
+        username: &str,
+        password: &str,
+    ) -> Result<MatrixHttpSuccess, MatrixClientError> {
+        self.get_config_document(host, port, username, password, INTERNAL_CARD_FORMAT_PATH)
+            .await
+    }
+
     /// GET /device.cgi/enroll-options?action=get&format=xml
     pub async fn get_enroll_options(
         &self,
@@ -261,6 +277,59 @@ impl MatrixHttpClient {
             .exchange(url, username, password, REQUEST_TIMEOUT)
             .await?;
         evaluate_count_response(status, body)
+    }
+
+    /// GET /device.cgi/command?action=geteventcount
+    ///
+    /// Current sequence number and roll-over count. This is not the event list.
+    pub async fn get_event_count(
+        &self,
+        host: &str,
+        port: u16,
+        username: &str,
+        password: &str,
+    ) -> Result<MatrixHttpSuccess, MatrixClientError> {
+        let url = build_cgi_get_url(
+            host,
+            port,
+            COMMAND_PATH,
+            &[("action", "geteventcount"), ("format", "xml")],
+        )?;
+        let (status, body) = self
+            .exchange(url, username, password, REQUEST_TIMEOUT)
+            .await?;
+        evaluate_event_response(status, body)
+    }
+
+    /// GET /device.cgi/events?action=getevent&roll-over-count=&seq-number=&no-of-events=
+    ///
+    /// `roll-over-count` and `seq-number` identify the first event of the batch.
+    pub async fn get_events(
+        &self,
+        host: &str,
+        port: u16,
+        username: &str,
+        password: &str,
+        roll_over_count: &str,
+        seq_number: &str,
+        no_of_events: &str,
+    ) -> Result<MatrixHttpSuccess, MatrixClientError> {
+        let url = build_cgi_get_url(
+            host,
+            port,
+            EVENTS_PATH,
+            &[
+                ("action", "getevent"),
+                ("roll-over-count", roll_over_count),
+                ("seq-number", seq_number),
+                ("no-of-events", no_of_events),
+                ("format", "xml"),
+            ],
+        )?;
+        let (status, body) = self
+            .exchange(url, username, password, REQUEST_TIMEOUT)
+            .await?;
+        evaluate_event_response(status, body)
     }
 
     async fn get_config_document(
@@ -594,6 +663,32 @@ fn card_fields_present(body: &str) -> bool {
     lower.contains("card1") || lower.contains("card2")
 }
 
+/// `geteventcount` and `events?action=getevent` return `<COSEC_API>` with
+/// `roll-over-count` and `seq-number` (or `seq-No`). The guide sample has no
+/// `Response-Code`. A non-zero code is still a failure.
+pub fn evaluate_event_response(
+    status: StatusCode,
+    body: String,
+) -> Result<MatrixHttpSuccess, MatrixClientError> {
+    match evaluate_matrix_response(status, body.clone()) {
+        Ok(success) => Ok(success),
+        Err(MatrixClientError::BadResponse)
+            if status.is_success() && event_cursor_fields_present(&body) =>
+        {
+            Ok(MatrixHttpSuccess {
+                body,
+                response_code: SUCCESS,
+            })
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn event_cursor_fields_present(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    lower.contains("roll-over-count") && (lower.contains("seq-number") || lower.contains("seq-no"))
+}
+
 fn is_cosec_config_document(status: StatusCode, body: &str) -> bool {
     status.is_success() && body.to_ascii_lowercase().contains("<cosec_api")
 }
@@ -686,8 +781,8 @@ fn map_transport_error(error: reqwest::Error) -> MatrixClientError {
 mod tests {
     use super::{
         build_cgi_get_url, evaluate_basic_config_response, evaluate_count_response,
-        evaluate_credential_response, evaluate_matrix_response, MatrixClientError,
-        MatrixHttpClient, BASIC_CONFIG_PATH, USERS_PATH,
+        evaluate_credential_response, evaluate_event_response, evaluate_matrix_response,
+        MatrixClientError, MatrixHttpClient, BASIC_CONFIG_PATH, USERS_PATH,
     };
     use crate::matrix::client::response_codes::{FAILURE, REFERENCE_USER_ID_EXISTS, SUCCESS};
     use reqwest::StatusCode;
@@ -1281,5 +1376,135 @@ mod tests {
             .unwrap();
         assert!(body.body.contains("card-type=4"));
         assert!(!body.body.contains("mifare-custom-key="));
+    }
+
+    #[tokio::test]
+    async fn internal_card_format_get_does_not_set_bit_width() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/device.cgi/internal-card-format"))
+            .and(query_param("action", "get"))
+            .and(basic_auth("admin", "secret"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string("Response-Code=0 format-id=2 max-no-of-bits=56"),
+            )
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/device.cgi/internal-card-format"))
+            .respond_with(
+                ResponseTemplate::new(401)
+                    .insert_header("WWW-Authenticate", "Basic realm=\"device\""),
+            )
+            .with_priority(2)
+            .mount(&server)
+            .await;
+
+        let client = MatrixHttpClient::new().unwrap();
+        let body = client
+            .get_internal_card_format("127.0.0.1", server.address().port(), "admin", "secret")
+            .await
+            .unwrap();
+        assert!(body.body.contains("max-no-of-bits=56"));
+        assert!(!body.body.contains("action=set"));
+    }
+
+    #[tokio::test]
+    async fn get_events_sends_rollover_seq_and_batch_size() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/device.cgi/events"))
+            .and(query_param("action", "getevent"))
+            .and(query_param("roll-over-count", "6"))
+            .and(query_param("seq-number", "1141"))
+            .and(query_param("no-of-events", "5"))
+            .and(basic_auth("admin", "secret"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                "<COSEC_API><Response-Code>0</Response-Code><roll-over-count>6</roll-over-count><seq-No>1141</seq-No><date>31122022</date><time>103008</time><event-id>101</event-id></COSEC_API>",
+            ))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/device.cgi/events"))
+            .respond_with(
+                ResponseTemplate::new(401)
+                    .insert_header("WWW-Authenticate", "Basic realm=\"device\""),
+            )
+            .with_priority(2)
+            .mount(&server)
+            .await;
+
+        let client = MatrixHttpClient::new().unwrap();
+        let body = client
+            .get_events(
+                "127.0.0.1",
+                server.address().port(),
+                "admin",
+                "secret",
+                "6",
+                "1141",
+                "5",
+            )
+            .await
+            .unwrap();
+        assert!(body.body.contains("seq-No"));
+    }
+
+    #[tokio::test]
+    async fn get_events_without_response_code_is_a_bad_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/device.cgi/events"))
+            .and(basic_auth("admin", "secret"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                "[RPL_EVT&6&1140&  {   0&14   } &1&31122022&103008&101&51579&0&20&]",
+            ))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/device.cgi/events"))
+            .respond_with(
+                ResponseTemplate::new(401)
+                    .insert_header("WWW-Authenticate", "Basic realm=\"device\""),
+            )
+            .with_priority(2)
+            .mount(&server)
+            .await;
+
+        let client = MatrixHttpClient::new().unwrap();
+        let error = client
+            .get_events(
+                "127.0.0.1",
+                server.address().port(),
+                "admin",
+                "secret",
+                "6",
+                "1141",
+                "5",
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error, MatrixClientError::BadResponse);
+    }
+
+    #[test]
+    fn event_count_without_response_code_is_accepted() {
+        let body =
+            "<COSEC_API><roll-over-count>1</roll-over-count><seq-number>1</seq-number></COSEC_API>";
+        let success = evaluate_event_response(StatusCode::OK, body.into()).unwrap();
+        assert_eq!(success.response_code, SUCCESS);
+        assert!(success.body.contains("seq-number"));
+    }
+
+    #[test]
+    fn event_body_without_cursor_fields_stays_a_bad_response() {
+        assert_eq!(
+            evaluate_event_response(StatusCode::OK, "Request failed: Incomplete command".into()),
+            Err(MatrixClientError::BadResponse)
+        );
     }
 }
