@@ -130,6 +130,9 @@ pub enum CredentialError {
     UserNotFound,
     #[error("CREDENTIAL_SECRET_UNAVAILABLE")]
     SecretUnavailable,
+    /// Stored ciphertext does not decrypt with this workstation's key.
+    #[error("CREDENTIAL_SECRET_CORRUPT")]
+    SecretCorrupt,
     #[error("DATABASE_UNAVAILABLE")]
     Unavailable,
 }

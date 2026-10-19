@@ -261,7 +261,10 @@ fn map_db_error(error: DatabaseError) -> CredentialError {
 
 fn map_secret_error(error: SecretError) -> CredentialError {
     tracing::error!(error = %error, "credential secret vault failed");
-    CredentialError::SecretUnavailable
+    match error {
+        SecretError::Unavailable => CredentialError::SecretUnavailable,
+        SecretError::Corrupt => CredentialError::SecretCorrupt,
+    }
 }
 
 #[cfg(test)]

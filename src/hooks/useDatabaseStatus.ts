@@ -25,43 +25,38 @@ export function useDatabaseStatus() {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+
+    function apply(next: DatabaseStatus) {
+      if (!cancelled) {
+        setStatus(next);
+        setError(null);
+        setLoading(false);
+      }
+    }
+
     getDatabaseStatus()
-      .then((next) => {
-        if (!cancelled) {
-          setStatus(next);
-          setError(null);
-        }
-      })
+      .then(apply)
       .catch((reason: unknown) => {
         if (!cancelled) {
           setError(reason instanceof Error ? reason.message : String(reason));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
           setLoading(false);
         }
       });
 
+    const delay = status?.connected ? 30_000 : 5_000;
     const timer = window.setInterval(() => {
       void getDatabaseStatus()
-        .then((next) => {
-          if (!cancelled) {
-            setStatus(next);
-            setError(null);
-          }
-        })
+        .then(apply)
         .catch(() => {
           /* keep last known status while polling */
         });
-    }, 5000);
+    }, delay);
 
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [status?.connected]);
 
   const retry = useCallback(() => {
     setRetrying(true);

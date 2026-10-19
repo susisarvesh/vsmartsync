@@ -11,7 +11,7 @@
 | Migrations | SQLx files in repository-root `migrations/` | **IMPLEMENTED** (`0001`–`0008`) |
 | Dev host port | **5432** | **IMPLEMENTED** |
 
-There is no migrate-only npm script. The app runs `connect_and_migrate` at startup. Live check: `cargo test --manifest-path src-tauri/Cargo.toml -- --ignored`.
+There is no migrate-only npm script. The app runs `connect_and_migrate` at startup. Live checks use a separate database named in `TEST_DATABASE_URL` (the name must end with `_test`). `cargo test --manifest-path src-tauri/Cargo.toml -- --ignored` refuses the application database.
 
 ## Users table (IMPLEMENTED)
 

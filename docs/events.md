@@ -148,3 +148,24 @@ The guide’s appendix lists user events, alarm events, system events, cafeteria
 - Claiming the desktop app is in the biometric matching loop
 - Using TCP to fill missed events
 - Treating `geteventcount` as a list of events (it is current seq + rollover)
+
+## Desktop poll settings
+
+The running app polls active readers on a timer. These settings are environment variables, read at startup. They are separate from how many readers can be registered.
+
+| Variable | Default | Allowed | Effect |
+|---|---|---|---|
+| `VSMART_POLL_CONCURRENCY` | 4 | 1–40 | Readers contacted at the same time |
+| `VSMART_POLL_INTERVAL_SECS` | 30 | 5–3600 | Target time from the start of one cycle to the start of the next |
+
+A value outside the allowed range is clamped and reported on the dashboard. The process still starts. Forty concurrent readers is allowed when set. It is not the recommended default. If enrollment waits or PostgreSQL refuses connections, set concurrency back to 4.
+
+The database pool is `concurrency + 3` connections, and at least 5. The extra three stay available for enrollment, user management, and the window. A poll does not hold a connection while it waits on a reader.
+
+A reader counts as reached only after the device answered and the visit's writes committed. `SECRET_CORRUPT` means the stored password does not decrypt with this workstation's key. Set that password again. The app does not replace or re-encrypt it. `SECRET_UNAVAILABLE` means the key file could not be read. A connection timeout stays `MATRIX_TIMEOUT`.
+
+Each visit still requests events in batches of 5, which is the documented limit for direct-door controllers, and stops after 20 batches (100 events) so one backlog cannot take the whole cycle. The next cycle continues from the stored checkpoint. The checkpoint and the batch are committed in one transaction, so a crash cannot move the checkpoint past events that were not stored. A repeated sequence for the same reader is ignored.
+
+A reader that fails waits before the next attempt. The wait grows from 15 seconds and stops growing at 10 minutes, with a small per-reader offset so the retries do not line up. A reader that is busy with enrollment is skipped and is not counted as a failure. Three authentication failures in a row are shown as needing an operator. Restarting the app clears these waits. Stored events and checkpoints remain in PostgreSQL.
+
+These timings come from the scheduler. They are not a measurement of physical Matrix hardware.

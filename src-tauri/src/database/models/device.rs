@@ -18,3 +18,11 @@ pub struct DeviceRecord {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
+
+/// Fields the poll scheduler needs. The password stays out of this row.
+#[derive(Debug, Clone, FromRow)]
+pub struct DevicePollTarget {
+    pub id: Uuid,
+    pub device_name: String,
+    pub status: String,
+}

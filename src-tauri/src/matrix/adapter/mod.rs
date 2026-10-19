@@ -9,7 +9,7 @@
 
 use thiserror::Error;
 
-use crate::matrix::client::{MatrixClientError, MatrixHttpClient};
+use crate::matrix::client::{EventBatchQuery, MatrixClientError, MatrixHttpClient};
 use crate::matrix::enrollment::{
     config_field, credential_counts, face_only_door, parse_card_credential, parse_card_read,
     reported_enrollment, CredentialCounts, HardwareEnrollType, ParsedCardCredential,
@@ -73,6 +73,7 @@ pub struct SetPinParams {
     pub pin: String,
 }
 
+#[derive(Clone)]
 pub struct MatrixAdapter {
     client: MatrixHttpClient,
 }
@@ -498,9 +499,11 @@ impl MatrixAdapter {
                 port,
                 username,
                 password,
-                &roll_over_count.to_string(),
-                &seq_number.to_string(),
-                &EVENT_BATCH_SIZE.to_string(),
+                EventBatchQuery {
+                    roll_over_count: &roll_over_count.to_string(),
+                    seq_number: &seq_number.to_string(),
+                    no_of_events: &EVENT_BATCH_SIZE.to_string(),
+                },
             )
             .await
             .map_err(map_adapter_error)?;

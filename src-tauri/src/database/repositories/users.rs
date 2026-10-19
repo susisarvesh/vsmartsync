@@ -53,6 +53,18 @@ impl UserRepository {
             .map_err(DatabaseError::Query)
     }
 
+    pub async fn find_by_ids(&self, ids: &[Uuid]) -> Result<Vec<UserRecord>, DatabaseError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let sql = format!("SELECT {USER_COLUMNS} FROM users WHERE id = ANY($1)");
+        sqlx::query_as::<_, UserRecord>(&sql)
+            .bind(ids)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(DatabaseError::Query)
+    }
+
     pub async fn list(&self) -> Result<Vec<UserRecord>, DatabaseError> {
         let sql = format!("SELECT {USER_COLUMNS} FROM users ORDER BY created_at DESC LIMIT $1");
         sqlx::query_as::<_, UserRecord>(&sql)
@@ -83,30 +95,66 @@ impl UserRepository {
     }
 
     pub async fn insert_all(&self, records: &[UserRecord]) -> Result<(), DatabaseError> {
-        let mut tx = self.pool.begin().await.map_err(DatabaseError::Query)?;
-        for record in records {
-            sqlx::query(
-                r#"
-                INSERT INTO users (
-                    id, username, status, matrix_user_id, short_name, full_name, reference_id,
-                    created_at, updated_at
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                "#,
-            )
-            .bind(record.id)
-            .bind(&record.username)
-            .bind(&record.status)
-            .bind(&record.matrix_user_id)
-            .bind(&record.short_name)
-            .bind(&record.full_name)
-            .bind(record.reference_id)
-            .bind(record.created_at)
-            .bind(record.updated_at)
-            .execute(&mut *tx)
-            .await
-            .map_err(DatabaseError::Query)?;
+        if records.is_empty() {
+            return Ok(());
         }
+        let ids: Vec<Uuid> = records.iter().map(|record| record.id).collect();
+        let usernames: Vec<&str> = records
+            .iter()
+            .map(|record| record.username.as_str())
+            .collect();
+        let statuses: Vec<&str> = records
+            .iter()
+            .map(|record| record.status.as_str())
+            .collect();
+        let matrix_user_ids: Vec<Option<&str>> = records
+            .iter()
+            .map(|record| record.matrix_user_id.as_deref())
+            .collect();
+        let short_names: Vec<Option<&str>> = records
+            .iter()
+            .map(|record| record.short_name.as_deref())
+            .collect();
+        let full_names: Vec<Option<&str>> = records
+            .iter()
+            .map(|record| record.full_name.as_deref())
+            .collect();
+        let reference_ids: Vec<Option<i64>> =
+            records.iter().map(|record| record.reference_id).collect();
+        let created_at: Vec<_> = records.iter().map(|record| record.created_at).collect();
+        let updated_at: Vec<_> = records.iter().map(|record| record.updated_at).collect();
+        let mut tx = self.pool.begin().await.map_err(DatabaseError::Query)?;
+        sqlx::query(
+            r#"
+            INSERT INTO users (
+                id, username, status, matrix_user_id, short_name, full_name, reference_id,
+                created_at, updated_at
+            )
+            SELECT * FROM UNNEST(
+                $1::uuid[],
+                $2::text[],
+                $3::text[],
+                $4::text[],
+                $5::text[],
+                $6::text[],
+                $7::int8[],
+                $8::timestamptz[],
+                $9::timestamptz[]
+            )
+            "#,
+        )
+        .bind(&ids)
+        .bind(&usernames)
+        .bind(&statuses)
+        .bind(&matrix_user_ids)
+        .bind(&short_names)
+        .bind(&full_names)
+        .bind(&reference_ids)
+        .bind(&created_at)
+        .bind(&updated_at)
+        .execute(&mut *tx)
+        .await
+        .map_err(DatabaseError::Query)?;
         tx.commit().await.map_err(DatabaseError::Query)?;
         Ok(())
     }

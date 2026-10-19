@@ -94,6 +94,28 @@ impl UserDeviceRepository {
             .map_err(DatabaseError::Query)
     }
 
+    pub async fn assigned_user_ids(
+        &self,
+        device_id: Uuid,
+        user_ids: &[Uuid],
+    ) -> Result<Vec<Uuid>, DatabaseError> {
+        if user_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        sqlx::query_scalar(
+            r#"
+            SELECT user_id
+            FROM user_devices
+            WHERE device_id = $1 AND user_id = ANY($2)
+            "#,
+        )
+        .bind(device_id)
+        .bind(user_ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(DatabaseError::Query)
+    }
+
     pub async fn contains_pair(
         &self,
         user_id: Uuid,

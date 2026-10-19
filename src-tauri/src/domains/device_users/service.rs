@@ -28,9 +28,26 @@ pub async fn ensure_mapping(
         .map_err(map_db_error)?
         .ok_or(DeviceUserError::DeviceNotFound)?;
 
+    ensure_known_mapping(
+        device_users,
+        user_id,
+        device_id,
+        user.matrix_user_id.as_deref(),
+        user.reference_id,
+    )
+    .await
+}
+
+/// Allocate a mapping when the caller already loaded the user and the device.
+pub async fn ensure_known_mapping(
+    device_users: &DeviceUserRepository,
+    user_id: Uuid,
+    device_id: Uuid,
+    matrix_user_id: Option<&str>,
+    reference_id: Option<i64>,
+) -> Result<DeviceUser, DeviceUserError> {
     let now = Utc::now();
-    let record = if let (Some(matrix_user_id), Some(reference_id)) =
-        (user.matrix_user_id.as_deref(), user.reference_id)
+    let record = if let (Some(matrix_user_id), Some(reference_id)) = (matrix_user_id, reference_id)
     {
         device_users
             .ensure_with_identity(user_id, device_id, matrix_user_id, reference_id, now)

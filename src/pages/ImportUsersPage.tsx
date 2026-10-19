@@ -30,7 +30,7 @@ export function ImportUsersPage({ enabled }: ImportUsersPageProps) {
     }
     setFileName(file.name);
     setErrors([]);
-    const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+    const bytes = new Uint8Array(await file.arrayBuffer());
     try {
       const result = await importUsers.mutateAsync(bytes);
       if (result.errors.length > 0) {

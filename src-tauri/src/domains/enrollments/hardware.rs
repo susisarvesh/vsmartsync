@@ -467,7 +467,8 @@ pub async fn enroll_on_device(
     )
     .await?;
     let enrollment_id =
-        execute_device_enrollment(pool, prepared.guard, prepared.session.id).await?;
+        execute_device_enrollment(pool, prepared.guard, prepared.session.id, matrix.clone())
+            .await?;
     get_enrollment(enrollments, enrollment_id).await
 }
 
@@ -476,6 +477,7 @@ pub async fn execute_device_enrollment(
     pool: DbPool,
     guard: DeviceEnrollmentGuard,
     session_id: Uuid,
+    matrix: MatrixAdapter,
 ) -> Result<Uuid, EnrollmentError> {
     let _guard = guard;
     let sessions = EnrollmentSessionRepository::new(pool.clone());
@@ -509,23 +511,6 @@ pub async fn execute_device_enrollment(
             return Err(EnrollmentError::SecretUnavailable);
         }
     };
-    let matrix = match MatrixAdapter::new() {
-        Ok(matrix) => matrix,
-        Err(_) => {
-            close_session(
-                &sessions,
-                session_id,
-                EnrollmentSessionStatus::Failed,
-                "DEVICE_OFFLINE",
-                user_id,
-                device_id,
-                enroll_type.as_str(),
-            )
-            .await;
-            return Err(EnrollmentError::Offline);
-        }
-    };
-
     let outcome = run_capture(
         &sessions,
         &users,
@@ -628,7 +613,7 @@ async fn run_capture(
     {
         Ok(()) => {}
         Err(error) if reader_is_busy(&error) => {
-            quiet_for_reader();
+            quiet_for_reader().await;
             matrix
                 .set_user(&device.host, port, &device.username, &password, &params)
                 .await
@@ -695,7 +680,7 @@ async fn run_capture(
     )
     .await
     {
-        quiet_for_reader();
+        quiet_for_reader().await;
     }
     if !advance(
         sessions,
@@ -976,12 +961,12 @@ fn reader_is_busy(error: &MatrixAdapterError) -> bool {
     matches!(error, MatrixAdapterError::ApiError { code: DEVICE_BUSY })
 }
 
-fn quiet_for_reader() {
-    quiet_for(CAPTURE_QUIET_SECS);
+async fn quiet_for_reader() {
+    quiet_for(CAPTURE_QUIET_SECS).await;
 }
 
-fn quiet_for(seconds: u64) {
-    std::thread::sleep(std::time::Duration::from_secs(seconds));
+async fn quiet_for(seconds: u64) {
+    tokio::time::sleep(std::time::Duration::from_secs(seconds)).await;
 }
 
 async fn retry_if_reader_busy<T, F, Fut>(mut op: F) -> Result<T, EnrollmentError>
@@ -992,7 +977,7 @@ where
     match op().await {
         Ok(value) => Ok(value),
         Err(error) if reader_is_busy(&error) => {
-            quiet_for_reader();
+            quiet_for_reader().await;
             op().await.map_err(map_matrix_error)
         }
         Err(error) => Err(map_matrix_error(error)),
@@ -1043,9 +1028,9 @@ async fn capture_on_reader(
             // request before the tap closes that screen, so a card held on
             // the reader is ignored.
             if stores_card(enroll_type) {
-                quiet_for(CARD_PRESENT_QUIET_SECS);
+                quiet_for(CARD_PRESENT_QUIET_SECS).await;
             } else {
-                quiet_for_reader();
+                quiet_for_reader().await;
             }
             confirm_capture(
                 matrix,
@@ -1061,7 +1046,7 @@ async fn capture_on_reader(
             .await
         }
         Err(error) if reader_is_busy(&error) => {
-            quiet_for_reader();
+            quiet_for_reader().await;
             if confirm_capture(
                 matrix,
                 host,
@@ -1082,7 +1067,7 @@ async fn capture_on_reader(
                 .enroll_user(host, port, username, password, matrix_user_id, enroll_type)
                 .await
                 .map_err(map_matrix_error)?;
-            quiet_for_reader();
+            quiet_for_reader().await;
             confirm_capture(
                 matrix,
                 host,
@@ -1128,7 +1113,7 @@ async fn confirm_capture(
     let mut last_error = None;
     for attempt in 0..4 {
         if attempt > 0 {
-            quiet_for_reader();
+            quiet_for_reader().await;
         }
         match matrix
             .credential_counts(host, port, username, password, matrix_user_id)
@@ -1294,6 +1279,7 @@ fn map_credential_error(error: credentials::CredentialError) -> EnrollmentError 
     match error {
         credentials::CredentialError::UserNotFound => EnrollmentError::UserNotFound,
         credentials::CredentialError::SecretUnavailable => EnrollmentError::SecretUnavailable,
+        credentials::CredentialError::SecretCorrupt => EnrollmentError::SecretCorrupt,
         credentials::CredentialError::InvalidType | credentials::CredentialError::InvalidValue => {
             EnrollmentError::InvalidType
         }

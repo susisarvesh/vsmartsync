@@ -186,9 +186,29 @@ mod tests {
     }
 
     #[test]
+    fn an_unreadable_key_location_is_unavailable_not_corrupt() {
+        let file = temp_dir();
+        fs::write(&file, b"not-a-directory").expect("file");
+        let nested = file.join("keys");
+        assert!(matches!(
+            SecretVault::open_in(&nested),
+            Err(SecretError::Unavailable)
+        ));
+        let _ = fs::remove_file(&file);
+    }
+
+    #[test]
+    fn a_different_key_cannot_decrypt() {
+        let writer = SecretVault::from_key([1u8; KEY_LEN]).expect("writer");
+        let blob = writer.encrypt("door-secret").expect("encrypt");
+        let reader = SecretVault::from_key([2u8; KEY_LEN]).expect("reader");
+        assert_eq!(reader.decrypt(&blob), Err(SecretError::Corrupt));
+    }
+
+    #[test]
     fn rejects_corrupt_ciphertext() {
         let vault = SecretVault::from_key([3u8; KEY_LEN]).expect("vault");
-        assert!(vault.decrypt(&[1, 2, 3]).is_err());
+        assert_eq!(vault.decrypt(&[1, 2, 3]), Err(SecretError::Corrupt));
     }
 
     #[test]

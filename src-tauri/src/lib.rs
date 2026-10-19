@@ -30,12 +30,27 @@ pub fn run() {
     init_tracing();
     load_env_files();
 
-    tracing::info!(stage = "foundation", "starting vsmart sync");
+    let workload = common::WorkloadConfig::from_env();
+    tracing::info!(
+        stage = "foundation",
+        concurrency = workload.concurrency,
+        interval_secs = workload.interval.as_secs(),
+        pool_size = workload.pool_size,
+        clamped = workload.clamped,
+        detail = %workload.detail,
+        "starting vsmart sync"
+    );
 
     tauri::Builder::default()
-        .setup(|app| {
-            app.manage(database::DatabaseRuntime::initialize());
+        .setup(move |app| {
+            app.manage(database::DatabaseRuntime::with_pool_size(
+                workload.pool_size,
+            ));
             app.manage(domains::enrollments::DeviceEnrollmentGate::new());
+            let tracker = domains::events::PollTracker::new(workload.clone());
+            app.manage(tracker.clone());
+            let matrix_runtime = matrix::MatrixRuntime::initialize();
+            app.manage(matrix_runtime.clone());
             let runtime =
                 database::DatabaseRuntime::clone(&app.state::<database::DatabaseRuntime>());
             let gate = domains::enrollments::DeviceEnrollmentGate::clone(
@@ -43,11 +58,19 @@ pub fn run() {
             );
             tauri::async_runtime::spawn(async move {
                 loop {
-                    let _ = tauri::async_runtime::spawn_blocking(|| {
-                        std::thread::sleep(std::time::Duration::from_secs(30));
-                    })
-                    .await;
-                    domains::events::poll_active_devices(&runtime, &gate).await;
+                    let started = std::time::Instant::now();
+                    if let Some(matrix) = matrix_runtime.adapter() {
+                        domains::events::poll_active_devices(&runtime, &gate, &matrix, &tracker)
+                            .await;
+                    } else {
+                        tracing::warn!(
+                            "access event poll skipped because the matrix client could not start"
+                        );
+                    }
+                    let pause = common::wait_after_cycle(workload.interval, started.elapsed());
+                    if !pause.is_zero() {
+                        tokio::time::sleep(pause).await;
+                    }
                 }
             });
 
@@ -101,7 +124,8 @@ pub fn run() {
             commands::get_card_reader_status,
             commands::test_card,
             commands::list_access_events,
-            commands::fetch_device_events
+            commands::fetch_device_events,
+            commands::get_poll_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

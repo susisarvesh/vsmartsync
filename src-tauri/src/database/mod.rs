@@ -7,10 +7,18 @@
 mod config;
 mod pool;
 mod runtime;
+mod test_isolation;
 
 pub use config::{DatabaseConfig, DatabaseConfigError, PublicDatabaseTarget};
-pub use pool::{connect, connect_and_migrate, ping, run_migrations, DatabaseError, DbPool};
+pub use pool::{
+    connect, connect_and_migrate, connect_and_migrate_with_limit, ping, run_migrations,
+    DatabaseError, DbPool,
+};
 pub use runtime::{DatabaseRuntime, DatabaseStatus};
+pub use test_isolation::{
+    assess_test_target, run_isolated_test, writable_test_config, IsolatedDatabase,
+    TestDatabaseError,
+};
 
 pub mod models;
 pub mod repositories;

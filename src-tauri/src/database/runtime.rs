@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
-use super::{connect_and_migrate, ping, DatabaseConfig, DatabaseError, DbPool};
+use super::{connect_and_migrate_with_limit, ping, DatabaseConfig, DatabaseError, DbPool};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,6 +24,7 @@ pub struct DatabaseStatus {
 struct DatabaseRuntimeInner {
     config: Result<DatabaseConfig, String>,
     pool: Mutex<Option<DbPool>>,
+    pool_size: u32,
 }
 
 #[derive(Clone)]
@@ -33,9 +34,15 @@ pub struct DatabaseRuntime {
 
 impl DatabaseRuntime {
     pub fn initialize() -> Self {
+        Self::with_pool_size(crate::common::WorkloadConfig::from_env().pool_size)
+    }
+
+    pub fn with_pool_size(pool_size: u32) -> Self {
         let config = DatabaseConfig::from_env().map_err(|error| error.to_string());
         let pool = match &config {
-            Ok(config) => match tauri::async_runtime::block_on(connect_and_migrate(config)) {
+            Ok(config) => match tauri::async_runtime::block_on(connect_and_migrate_with_limit(
+                config, pool_size,
+            )) {
                 Ok(pool) => {
                     tracing::info!("postgresql pool is ready");
                     Some(pool)
@@ -56,6 +63,7 @@ impl DatabaseRuntime {
             inner: Arc::new(DatabaseRuntimeInner {
                 config,
                 pool: Mutex::new(pool),
+                pool_size,
             }),
         }
     }
@@ -73,7 +81,7 @@ impl DatabaseRuntime {
             Err(error) => return self.disconnected_status(config_message(error)),
         };
 
-        match connect_and_migrate(config).await {
+        match connect_and_migrate_with_limit(config, self.inner.pool_size).await {
             Ok(pool) => {
                 if let Ok(mut guard) = self.inner.pool.lock() {
                     *guard = Some(pool);

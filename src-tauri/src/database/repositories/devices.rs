@@ -1,6 +1,6 @@
 use uuid::Uuid;
 
-use crate::database::models::DeviceRecord;
+use crate::database::models::{DevicePollTarget, DeviceRecord};
 use crate::database::{DatabaseError, DbPool};
 
 pub const DEVICE_LIST_LIMIT: i64 = 200;
@@ -56,6 +56,17 @@ impl DeviceRepository {
             .fetch_optional(&self.pool)
             .await
             .map_err(DatabaseError::Query)
+    }
+
+    /// Active-reader scheduling. Does not load the password ciphertext.
+    pub async fn list_for_poll(&self) -> Result<Vec<DevicePollTarget>, DatabaseError> {
+        sqlx::query_as::<_, DevicePollTarget>(
+            "SELECT id, device_name, status FROM devices ORDER BY created_at DESC LIMIT $1",
+        )
+        .bind(DEVICE_LIST_LIMIT)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(DatabaseError::Query)
     }
 
     pub async fn list(&self) -> Result<Vec<DeviceRecord>, DatabaseError> {

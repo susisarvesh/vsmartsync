@@ -15,7 +15,7 @@ export async function listUsers(): Promise<User[]> {
   return invoke<User[]>("list_users");
 }
 
-export async function importUsers(bytes: number[]): Promise<ImportUsersResult> {
+export async function importUsers(bytes: Uint8Array): Promise<ImportUsersResult> {
   return invoke<ImportUsersResult>("import_users", { bytes });
 }
 

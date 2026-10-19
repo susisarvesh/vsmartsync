@@ -15,11 +15,13 @@ use crate::domains::enrollments::{
     self, CardRead, CardReaderStatus, CardTestResult, DeviceEnrollmentGate,
     DeviceEnrollmentOptions, Enrollment, EnrollmentError, EnrollmentListFilter, EnrollmentSession,
 };
-use crate::domains::events::{self, AccessEvent, EventError, FetchDeviceEventsResult};
+use crate::domains::events::{
+    self, AccessEvent, EventError, FetchDeviceEventsResult, PollStatus, PollTracker,
+};
 use crate::domains::synchronization::{self, SyncError, SyncUsersResult};
 use crate::domains::user_devices::{self, UserDeviceAssignment, UserDeviceError, UserOnDevice};
 use crate::domains::users::{self, ImportUsersResult, User, UserError};
-use crate::matrix::MatrixAdapter;
+use crate::matrix::MatrixRuntime;
 use uuid::Uuid;
 
 #[tauri::command]
@@ -136,6 +138,7 @@ pub async fn activate_user(
 #[tauri::command]
 pub async fn delete_user(
     runtime: tauri::State<'_, DatabaseRuntime>,
+    matrix_runtime: tauri::State<'_, MatrixRuntime>,
     id: Uuid,
 ) -> Result<(), String> {
     tracing::info!(command = "delete_user", user_id = %id, "frontend invoked rust");
@@ -147,7 +150,9 @@ pub async fn delete_user(
     let enrollments = enrollments_repo(&runtime)?;
     let sessions = enrollment_sessions_repo(&runtime)?;
     let vault = DevicePasswordVault::open().map_err(secret_error_to_command)?;
-    let matrix = MatrixAdapter::new().map_err(|_| "MATRIX_UNREACHABLE".to_string())?;
+    let matrix = matrix_runtime
+        .adapter()
+        .ok_or_else(|| "MATRIX_UNREACHABLE".to_string())?;
     users::delete_user(
         &users,
         &devices,
@@ -247,6 +252,7 @@ pub async fn remove_user_device(
 #[tauri::command]
 pub async fn sync_assigned_users(
     runtime: tauri::State<'_, DatabaseRuntime>,
+    matrix_runtime: tauri::State<'_, MatrixRuntime>,
     device_id: Uuid,
     user_ids: Vec<Uuid>,
 ) -> Result<SyncUsersResult, String> {
@@ -261,7 +267,9 @@ pub async fn sync_assigned_users(
     let assignments = user_devices_repo(&runtime)?;
     let mappings = device_users_repo(&runtime)?;
     let vault = DevicePasswordVault::open().map_err(secret_error_to_command)?;
-    let matrix = MatrixAdapter::new().map_err(|_| "MATRIX_UNREACHABLE".to_string())?;
+    let matrix = matrix_runtime
+        .adapter()
+        .ok_or_else(|| "MATRIX_UNREACHABLE".to_string())?;
     synchronization::sync_assigned_users(
         &users,
         &devices,
@@ -380,6 +388,7 @@ pub async fn set_device_password(
 #[tauri::command]
 pub async fn test_device_connection(
     runtime: tauri::State<'_, DatabaseRuntime>,
+    matrix_runtime: tauri::State<'_, MatrixRuntime>,
     id: Uuid,
 ) -> Result<Device, String> {
     tracing::info!(
@@ -389,7 +398,9 @@ pub async fn test_device_connection(
     );
     let repo = devices_repo(&runtime)?;
     let vault = DevicePasswordVault::open().map_err(secret_error_to_command)?;
-    let matrix = MatrixAdapter::new().map_err(|_| "DEVICE_OFFLINE".to_string())?;
+    let matrix = matrix_runtime
+        .adapter()
+        .ok_or_else(|| "DEVICE_OFFLINE".to_string())?;
     devices::test_device_connection(&repo, &vault, &matrix, id)
         .await
         .map_err(device_error_to_command)
@@ -612,6 +623,7 @@ pub async fn retry_enrollment(
 #[tauri::command]
 pub async fn device_enrollment_options(
     runtime: tauri::State<'_, DatabaseRuntime>,
+    matrix_runtime: tauri::State<'_, MatrixRuntime>,
     device_id: Uuid,
 ) -> Result<DeviceEnrollmentOptions, String> {
     tracing::info!(
@@ -621,7 +633,9 @@ pub async fn device_enrollment_options(
     );
     let devices = devices_repo(&runtime)?;
     let vault = DevicePasswordVault::open().map_err(secret_error_to_command)?;
-    let matrix = MatrixAdapter::new().map_err(|_| "DEVICE_OFFLINE".to_string())?;
+    let matrix = matrix_runtime
+        .adapter()
+        .ok_or_else(|| "DEVICE_OFFLINE".to_string())?;
     enrollments::device_enrollment_options(&devices, &vault, &matrix, device_id)
         .await
         .map_err(enrollment_error_to_command)
@@ -630,6 +644,7 @@ pub async fn device_enrollment_options(
 #[tauri::command]
 pub async fn enroll_on_device(
     runtime: tauri::State<'_, DatabaseRuntime>,
+    matrix_runtime: tauri::State<'_, MatrixRuntime>,
     gate: tauri::State<'_, DeviceEnrollmentGate>,
     device_id: Uuid,
     user_id: Uuid,
@@ -650,7 +665,9 @@ pub async fn enroll_on_device(
     let assignments = user_devices_repo(&runtime)?;
     let device_users = device_users_repo(&runtime)?;
     let vault = DevicePasswordVault::open().map_err(secret_error_to_command)?;
-    let matrix = MatrixAdapter::new().map_err(|_| "DEVICE_OFFLINE".to_string())?;
+    let matrix = matrix_runtime
+        .adapter()
+        .ok_or_else(|| "DEVICE_OFFLINE".to_string())?;
     let pool = enrollment_pool(&runtime)?;
     enrollments::enroll_on_device(
         &sessions,
@@ -675,6 +692,7 @@ pub async fn enroll_on_device(
 #[tauri::command]
 pub async fn start_device_enrollment(
     runtime: tauri::State<'_, DatabaseRuntime>,
+    matrix_runtime: tauri::State<'_, MatrixRuntime>,
     gate: tauri::State<'_, DeviceEnrollmentGate>,
     device_id: Uuid,
     user_id: Uuid,
@@ -692,7 +710,9 @@ pub async fn start_device_enrollment(
     let devices = devices_repo(&runtime)?;
     let assignments = user_devices_repo(&runtime)?;
     let vault = DevicePasswordVault::open().map_err(secret_error_to_command)?;
-    let matrix = MatrixAdapter::new().map_err(|_| "DEVICE_OFFLINE".to_string())?;
+    let matrix = matrix_runtime
+        .adapter()
+        .ok_or_else(|| "DEVICE_OFFLINE".to_string())?;
     let pool = enrollment_pool(&runtime)?;
     let prepared = enrollments::prepare_device_enrollment(
         &sessions,
@@ -711,8 +731,11 @@ pub async fn start_device_enrollment(
     let session = prepared.session.clone();
     let session_id = prepared.session.id;
     let guard = prepared.guard;
+    let matrix = matrix.clone();
     tauri::async_runtime::spawn(async move {
-        if let Err(error) = enrollments::execute_device_enrollment(pool, guard, session_id).await {
+        if let Err(error) =
+            enrollments::execute_device_enrollment(pool, guard, session_id, matrix).await
+        {
             tracing::info!(
                 enrollment_id = %session_id,
                 result = %error,
@@ -762,12 +785,15 @@ pub async fn cancel_device_enrollment_session(
 #[tauri::command]
 pub async fn read_card(
     runtime: tauri::State<'_, DatabaseRuntime>,
+    matrix_runtime: tauri::State<'_, MatrixRuntime>,
     device_id: Uuid,
 ) -> Result<CardRead, String> {
     tracing::info!(command = "read_card", device_id = %device_id, "frontend invoked rust");
     let devices = devices_repo(&runtime)?;
     let vault = DevicePasswordVault::open().map_err(secret_error_to_command)?;
-    let matrix = MatrixAdapter::new().map_err(|_| "DEVICE_OFFLINE".to_string())?;
+    let matrix = matrix_runtime
+        .adapter()
+        .ok_or_else(|| "DEVICE_OFFLINE".to_string())?;
     enrollments::read_card(&devices, &vault, &matrix, device_id)
         .await
         .map_err(enrollment_error_to_command)
@@ -776,6 +802,7 @@ pub async fn read_card(
 #[tauri::command]
 pub async fn get_card_reader_status(
     runtime: tauri::State<'_, DatabaseRuntime>,
+    matrix_runtime: tauri::State<'_, MatrixRuntime>,
     device_id: Uuid,
 ) -> Result<CardReaderStatus, String> {
     tracing::info!(
@@ -785,7 +812,9 @@ pub async fn get_card_reader_status(
     );
     let devices = devices_repo(&runtime)?;
     let vault = DevicePasswordVault::open().map_err(secret_error_to_command)?;
-    let matrix = MatrixAdapter::new().map_err(|_| "DEVICE_OFFLINE".to_string())?;
+    let matrix = matrix_runtime
+        .adapter()
+        .ok_or_else(|| "DEVICE_OFFLINE".to_string())?;
     enrollments::card_reader_status(&devices, &vault, &matrix, device_id)
         .await
         .map_err(enrollment_error_to_command)
@@ -794,12 +823,15 @@ pub async fn get_card_reader_status(
 #[tauri::command]
 pub async fn test_card(
     runtime: tauri::State<'_, DatabaseRuntime>,
+    matrix_runtime: tauri::State<'_, MatrixRuntime>,
     device_id: Uuid,
 ) -> Result<CardTestResult, String> {
     tracing::info!(command = "test_card", device_id = %device_id, "frontend invoked rust");
     let devices = devices_repo(&runtime)?;
     let vault = DevicePasswordVault::open().map_err(secret_error_to_command)?;
-    let matrix = MatrixAdapter::new().map_err(|_| "DEVICE_OFFLINE".to_string())?;
+    let matrix = matrix_runtime
+        .adapter()
+        .ok_or_else(|| "DEVICE_OFFLINE".to_string())?;
     enrollments::test_card(&devices, &vault, &matrix, device_id)
         .await
         .map_err(enrollment_error_to_command)
@@ -842,7 +874,9 @@ pub async fn list_access_events(
 #[tauri::command]
 pub async fn fetch_device_events(
     runtime: tauri::State<'_, DatabaseRuntime>,
+    matrix_runtime: tauri::State<'_, MatrixRuntime>,
     gate: tauri::State<'_, DeviceEnrollmentGate>,
+    tracker: tauri::State<'_, PollTracker>,
     device_id: Uuid,
 ) -> Result<FetchDeviceEventsResult, String> {
     tracing::info!(
@@ -850,21 +884,42 @@ pub async fn fetch_device_events(
         device_id = %device_id,
         "frontend invoked rust"
     );
-    let pool = event_pool(&runtime)?;
-    let vault = DevicePasswordVault::open().map_err(secret_error_to_command)?;
-    let matrix = MatrixAdapter::new().map_err(|_| EventError::Offline.to_string())?;
-    events::fetch_device_events(
-        &DeviceRepository::new(pool.clone()),
-        &AccessEventRepository::new(pool.clone()),
-        &DeviceUserRepository::new(pool.clone()),
-        &UserRepository::new(pool),
-        &vault,
-        &matrix,
-        &gate,
-        device_id,
-    )
-    .await
-    .map_err(event_error_to_command)
+    if !tracker.try_claim(device_id) {
+        return Err(event_error_to_command(EventError::DeviceBusy));
+    }
+    let pool = event_pool(&runtime);
+    let vault = DevicePasswordVault::open().map_err(secret_error_to_command);
+    let matrix = matrix_runtime.adapter();
+    let result = match (pool, vault, matrix) {
+        (Ok(pool), Ok(vault), Some(matrix)) => events::fetch_device_events(
+            &DeviceRepository::new(pool.clone()),
+            &AccessEventRepository::new(pool.clone()),
+            &DeviceUserRepository::new(pool),
+            &vault,
+            &matrix,
+            &gate,
+            device_id,
+        )
+        .await
+        .map_err(event_error_to_command),
+        (Err(error), _, _) => Err(error),
+        (_, Err(error), _) => Err(error),
+        (_, _, None) => Err(EventError::Offline.to_string()),
+    };
+    tracker.release(device_id);
+    result
+}
+
+#[tauri::command]
+pub fn get_poll_status(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    tracker: tauri::State<'_, PollTracker>,
+) -> PollStatus {
+    if let Some(pool) = runtime.pool() {
+        let idle = u32::try_from(pool.num_idle()).unwrap_or(u32::MAX);
+        tracker.set_pool(pool.size().saturating_sub(idle), idle);
+    }
+    tracker.snapshot()
 }
 
 fn event_pool(runtime: &DatabaseRuntime) -> Result<crate::database::DbPool, String> {
@@ -935,19 +990,26 @@ fn enrollment_error_to_command(error: EnrollmentError) -> String {
     error.to_string()
 }
 
-fn secret_error_to_command(_: crate::common::SecretError) -> String {
-    DeviceError::SecretUnavailable.to_string()
+fn secret_error_to_command(error: crate::common::SecretError) -> String {
+    match error {
+        crate::common::SecretError::Unavailable => DeviceError::SecretUnavailable.to_string(),
+        crate::common::SecretError::Corrupt => DeviceError::SecretCorrupt.to_string(),
+    }
 }
 
-fn credential_secret_error(_: crate::common::SecretError) -> String {
-    CredentialError::SecretUnavailable.to_string()
+fn credential_secret_error(error: crate::common::SecretError) -> String {
+    match error {
+        crate::common::SecretError::Unavailable => CredentialError::SecretUnavailable.to_string(),
+        crate::common::SecretError::Corrupt => CredentialError::SecretCorrupt.to_string(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        credential_error_to_command, device_error_to_command, enrollment_error_to_command,
-        get_app_info, sync_error_to_command, user_device_error_to_command, user_error_to_command,
+        credential_error_to_command, credential_secret_error, device_error_to_command,
+        enrollment_error_to_command, get_app_info, secret_error_to_command, sync_error_to_command,
+        user_device_error_to_command, user_error_to_command,
     };
     use crate::common::AppInfo;
     use crate::domains::credentials::{
@@ -1058,6 +1120,14 @@ mod tests {
             device_error_to_command(DeviceError::SecretCorrupt),
             "DEVICE_SECRET_CORRUPT"
         );
+        assert_eq!(
+            secret_error_to_command(crate::common::SecretError::Corrupt),
+            "DEVICE_SECRET_CORRUPT"
+        );
+        assert_eq!(
+            secret_error_to_command(crate::common::SecretError::Unavailable),
+            "DEVICE_SECRET_UNAVAILABLE"
+        );
     }
 
     #[test]
@@ -1078,6 +1148,10 @@ mod tests {
         assert_eq!(message, "CREDENTIAL_SECRET_UNAVAILABLE");
         assert!(!message.to_lowercase().contains("pin"));
         assert!(!message.contains("ciphertext"));
+        assert_eq!(
+            credential_secret_error(crate::common::SecretError::Corrupt),
+            "CREDENTIAL_SECRET_CORRUPT"
+        );
     }
 
     #[test]

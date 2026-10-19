@@ -30,6 +30,7 @@ sha2 = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 digest_auth = { version = "0.3.1", default-features = false }
 calamine = "0.26"
+tokio = { version = "1", features = ["time", "sync"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

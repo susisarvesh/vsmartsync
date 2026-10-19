@@ -1,7 +1,10 @@
+use std::collections::{HashMap, HashSet};
+
 use chrono::Utc;
 use uuid::Uuid;
 
 use crate::common::{DevicePasswordVault, SecretError};
+use crate::database::models::UserRecord;
 use crate::database::repositories::{
     DeviceRepository, DeviceUserRepository, UserDeviceRepository, UserRepository,
 };
@@ -54,6 +57,17 @@ pub async fn sync_assigned_users(
         .decrypt(&device.password_ciphertext)
         .map_err(map_secret_error)?;
 
+    let loaded_users = users.find_by_ids(&user_ids).await.map_err(map_db_error)?;
+    let users_by_id: HashMap<Uuid, UserRecord> = loaded_users
+        .into_iter()
+        .map(|user| (user.id, user))
+        .collect();
+    let assigned = assignments
+        .assigned_user_ids(device_id, &user_ids)
+        .await
+        .map_err(map_db_error)?;
+    let assigned: HashSet<Uuid> = assigned.into_iter().collect();
+
     let mut synced = Vec::new();
     let mut failed = Vec::new();
     let mut saw_success = false;
@@ -61,11 +75,10 @@ pub async fn sync_assigned_users(
 
     for user_id in user_ids {
         match push_one(
-            users,
-            devices,
-            assignments,
             device_users,
             matrix,
+            &users_by_id,
+            &assigned,
             &device.host,
             port,
             &device.username,
@@ -131,11 +144,10 @@ pub async fn sync_assigned_users(
 
 #[allow(clippy::too_many_arguments)]
 async fn push_one(
-    users: &UserRepository,
-    devices: &DeviceRepository,
-    assignments: &UserDeviceRepository,
     device_users_repo: &DeviceUserRepository,
     matrix: &MatrixAdapter,
+    users_by_id: &HashMap<Uuid, UserRecord>,
+    assigned: &HashSet<Uuid>,
     host: &str,
     port: u16,
     device_username: &str,
@@ -143,18 +155,12 @@ async fn push_one(
     user_id: Uuid,
     device_id: Uuid,
 ) -> Result<SyncedDeviceUser, SyncUserFailure> {
-    let assigned = assignments
-        .contains_pair(user_id, device_id)
-        .await
-        .map_err(|error| fail(user_id, None, map_db_error(error).to_string()))?;
-    if !assigned {
+    if !assigned.contains(&user_id) {
         return Err(fail(user_id, None, "USER_DEVICE_NOT_FOUND"));
     }
 
-    let user = users
-        .find_by_id(user_id)
-        .await
-        .map_err(|error| fail(user_id, None, map_db_error(error).to_string()))?
+    let user = users_by_id
+        .get(&user_id)
         .ok_or_else(|| fail(user_id, None, "USER_NOT_FOUND"))?;
     let username = user.username.clone();
     let active = match UserStatus::parse(&user.status) {
@@ -163,16 +169,21 @@ async fn push_one(
         Err(_) => return Err(fail(user_id, Some(username), "DATABASE_UNAVAILABLE")),
     };
 
-    let mapping =
-        device_users::ensure_mapping(device_users_repo, users, devices, user_id, device_id)
-            .await
-            .map_err(|error| {
-                fail(
-                    user_id,
-                    Some(username.clone()),
-                    map_device_user_error(error),
-                )
-            })?;
+    let mapping = device_users::ensure_known_mapping(
+        device_users_repo,
+        user_id,
+        device_id,
+        user.matrix_user_id.as_deref(),
+        user.reference_id,
+    )
+    .await
+    .map_err(|error| {
+        fail(
+            user_id,
+            Some(username.clone()),
+            map_device_user_error(error),
+        )
+    })?;
     let ref_user_id = u32::try_from(mapping.matrix_ref_user_id).unwrap_or(u32::MAX);
     if ref_user_id > 99_999_999 {
         return Err(fail(user_id, Some(username), "MATRIX_INVALID_ARGUMENT"));

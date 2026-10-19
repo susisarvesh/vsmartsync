@@ -6,6 +6,7 @@ import {
   Users,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { PollHealthCard } from "@/components/PollHealthCard";
 import { useAppInfo } from "@/hooks/useAppInfo";
 import { cn } from "@/lib/utils";
 import type { AppRoute } from "@/navigation";
@@ -62,6 +63,8 @@ export function DashboardPage({
         description="Operational status for this workstation. Only installed modules are shown."
         titleClassName="text-2xl font-bold tracking-normal"
       />
+
+      <PollHealthCard />
 
       <section className="mb-5">
         <div className="mb-2 flex items-end justify-between gap-2">

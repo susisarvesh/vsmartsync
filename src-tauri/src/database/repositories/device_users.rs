@@ -70,6 +70,26 @@ impl DeviceUserRepository {
         .map_err(DatabaseError::Query)
     }
 
+    /// Reference id, local user, and username for one device.
+    /// A missing user leaves the username empty and keeps the user id.
+    pub async fn names_for_device(
+        &self,
+        device_id: Uuid,
+    ) -> Result<Vec<(i64, Uuid, Option<String>)>, DatabaseError> {
+        sqlx::query_as(
+            r#"
+            SELECT mapping.matrix_ref_user_id, mapping.user_id, person.username
+            FROM device_users AS mapping
+            LEFT JOIN users AS person ON person.id = mapping.user_id
+            WHERE mapping.device_id = $1
+            "#,
+        )
+        .bind(device_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(DatabaseError::Query)
+    }
+
     pub async fn find_by_device_and_ref(
         &self,
         device_id: Uuid,

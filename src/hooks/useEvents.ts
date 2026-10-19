@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { fetchDeviceEvents, listAccessEvents } from "@/services/events";
+import { fetchDeviceEvents, getPollStatus, listAccessEvents } from "@/services/events";
 
 export function useAccessEvents(enabled: boolean, deviceId: string | null) {
   return useQuery({
@@ -7,6 +7,14 @@ export function useAccessEvents(enabled: boolean, deviceId: string | null) {
     queryFn: () => listAccessEvents(deviceId),
     enabled,
     refetchInterval: 30_000,
+  });
+}
+
+export function usePollStatus() {
+  return useQuery({
+    queryKey: ["poll-status"],
+    queryFn: getPollStatus,
+    refetchInterval: 15_000,
   });
 }
 

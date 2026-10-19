@@ -11,7 +11,8 @@ use thiserror::Error;
 use uuid::Uuid;
 
 pub use service::{
-    ensure_mapping, get_device_user, list_device_users_for_device, mark_provisioned,
+    ensure_known_mapping, ensure_mapping, get_device_user, list_device_users_for_device,
+    mark_provisioned,
 };
 
 /// Application view of a device-scoped Matrix identity mapping.

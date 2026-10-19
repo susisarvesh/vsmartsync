@@ -14,7 +14,7 @@ mod user_device;
 
 pub use access_event::{AccessEventRecord, AccessEventWrite, DeviceEventCursorRecord};
 pub use credential::{CredentialRecord, CredentialWriteRecord};
-pub use device::DeviceRecord;
+pub use device::{DevicePollTarget, DeviceRecord};
 pub use device_user::{DeviceUserRecord, DeviceUserWriteRecord};
 pub use enrollment::{EnrollmentRecord, EnrollmentWriteRecord};
 pub use enrollment_session::{EnrollmentSessionRecord, EnrollmentSessionWriteRecord};

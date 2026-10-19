@@ -3,10 +3,13 @@
 //! Owns: HTTP auth handshake, timeouts, no redirects, CGI URL construction
 //! for documented paths, and `Response-Code` evaluation.
 //!
-//! The first request is unauthenticated. A Digest challenge (`MD5`, `qop=auth`)
-//! is answered with Digest. A Basic challenge is answered with Basic.
-//! At most two follow-up requests: the challenge response, then one `stale=true`
-//! Digest refresh. That handshake is not a Sync retry.
+//! The first request to a device is unauthenticated. A Digest challenge
+//! (`MD5`, `qop=auth`) is answered with Digest. A Basic challenge is answered
+//! with Basic. At most two follow-up requests: the challenge response, then
+//! one `stale=true` Digest refresh. That handshake is not a Sync retry.
+//! After success, later requests to the same host, port, and username send
+//! `Authorization` immediately. A later 401 drops that session and repeats
+//! the handshake. The password is not stored.
 //!
 //! Must not own: Sync jobs, domain rules, capability tables, or React-facing
 //! types. Do not invent CGI endpoints. Never log passwords, `Authorization`,
@@ -15,9 +18,11 @@
 mod response;
 pub mod response_codes;
 
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use digest_auth::{AlgorithmType, AuthContext, Qop};
+use digest_auth::{AlgorithmType, AuthContext, Qop, WwwAuthenticateHeader};
 use reqwest::header::{HeaderMap, AUTHORIZATION, WWW_AUTHENTICATE};
 use reqwest::{Client, StatusCode, Url};
 use thiserror::Error;
@@ -66,9 +71,69 @@ pub struct MatrixHttpSuccess {
     pub response_code: i32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MatrixHttpClient {
     client: Client,
+    sessions: Arc<Mutex<AuthBook>>,
+}
+
+/// Cached device logins. One entry per host, port, and username, capped so a
+/// long-running workstation does not keep a session for every reader it has
+/// ever contacted.
+const MAX_AUTH_SESSIONS: usize = 256;
+
+struct AuthBook {
+    sessions: HashMap<AuthIdentity, AuthSession>,
+    order: VecDeque<AuthIdentity>,
+}
+
+impl AuthBook {
+    fn new() -> Self {
+        Self {
+            sessions: HashMap::new(),
+            order: VecDeque::new(),
+        }
+    }
+
+    fn insert(&mut self, identity: AuthIdentity, session: AuthSession) {
+        if self.sessions.insert(identity.clone(), session).is_some() {
+            self.order.retain(|item| item != &identity);
+        }
+        self.order.push_back(identity);
+        while self.sessions.len() > MAX_AUTH_SESSIONS {
+            let Some(old) = self.order.pop_front() else {
+                break;
+            };
+            self.sessions.remove(&old);
+        }
+    }
+
+    fn touch(&mut self, identity: &AuthIdentity) {
+        if let Some(index) = self.order.iter().position(|item| item == identity) {
+            let Some(current) = self.order.remove(index) else {
+                return;
+            };
+            self.order.push_back(current);
+        }
+    }
+
+    fn remove(&mut self, identity: &AuthIdentity) {
+        self.sessions.remove(identity);
+        self.order.retain(|item| item != identity);
+    }
+}
+
+impl std::fmt::Debug for MatrixHttpClient {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("MatrixHttpClient")
+    }
+}
+
+/// The three query fields `events?action=getevent` requires.
+pub struct EventBatchQuery<'a> {
+    pub roll_over_count: &'a str,
+    pub seq_number: &'a str,
+    pub no_of_events: &'a str,
 }
 
 impl MatrixHttpClient {
@@ -79,7 +144,10 @@ impl MatrixHttpClient {
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|_| MatrixClientError::Unreachable)?;
-        Ok(Self { client })
+        Ok(Self {
+            client,
+            sessions: Arc::new(Mutex::new(AuthBook::new())),
+        })
     }
 
     /// GET /device.cgi/device-basic-config?action=get&format=xml
@@ -310,9 +378,7 @@ impl MatrixHttpClient {
         port: u16,
         username: &str,
         password: &str,
-        roll_over_count: &str,
-        seq_number: &str,
-        no_of_events: &str,
+        query: EventBatchQuery<'_>,
     ) -> Result<MatrixHttpSuccess, MatrixClientError> {
         let url = build_cgi_get_url(
             host,
@@ -320,9 +386,9 @@ impl MatrixHttpClient {
             EVENTS_PATH,
             &[
                 ("action", "getevent"),
-                ("roll-over-count", roll_over_count),
-                ("seq-number", seq_number),
-                ("no-of-events", no_of_events),
+                ("roll-over-count", query.roll_over_count),
+                ("seq-number", query.seq_number),
+                ("no-of-events", query.no_of_events),
                 ("format", "xml"),
             ],
         )?;
@@ -440,14 +506,77 @@ impl MatrixHttpClient {
         password: &str,
         timeout: Duration,
     ) -> Result<(StatusCode, String), MatrixClientError> {
-        let mut authorization = None;
+        let Some(identity) = auth_identity(&url, username) else {
+            return Err(MatrixClientError::InvalidTarget);
+        };
+        if let Some(authorization) = self.cached_authorization(&identity, username, password, &url)
+        {
+            let response = self
+                .send_get(&url, username, password, Some(&authorization), timeout)
+                .await?;
+            if response.status() != StatusCode::UNAUTHORIZED {
+                let status = response.status();
+                let body = response
+                    .text()
+                    .await
+                    .map_err(|_| MatrixClientError::BadResponse)?;
+                return Ok((status, body));
+            }
+            self.clear_session(&identity);
+            let challenge = www_authenticate(response.headers());
+            return self
+                .follow_challenges(url, username, password, timeout, &identity, challenge)
+                .await;
+        }
+        self.follow_challenges(url, username, password, timeout, &identity, None)
+            .await
+    }
+
+    /// Unauthenticated request, then at most two challenge responses.
+    /// A challenge already in hand (a rejected cached session) is answered
+    /// without sending that unauthenticated request again.
+    async fn follow_challenges(
+        &self,
+        url: Url,
+        username: &str,
+        password: &str,
+        timeout: Duration,
+        identity: &AuthIdentity,
+        mut pending_challenge: Option<String>,
+    ) -> Result<(StatusCode, String), MatrixClientError> {
+        let mut issued = None;
         let mut followups = 0u8;
         loop {
+            if issued.is_none() {
+                if let Some(challenge) = pending_challenge.take() {
+                    if followups >= MAX_AUTH_FOLLOWUPS {
+                        return Err(MatrixClientError::AuthFailed);
+                    }
+                    issued = Some(issue_authorization(
+                        Some(&challenge),
+                        username,
+                        password,
+                        &url,
+                        followups,
+                    )?);
+                    followups += 1;
+                    continue;
+                }
+            }
             let response = self
-                .send_get(&url, username, password, authorization.as_ref(), timeout)
+                .send_get(
+                    &url,
+                    username,
+                    password,
+                    issued.as_ref().map(|value| &value.header),
+                    timeout,
+                )
                 .await?;
             let status = response.status();
             if status != StatusCode::UNAUTHORIZED {
+                if let Some(value) = issued {
+                    self.store_session(identity, value.session);
+                }
                 let body = response
                     .text()
                     .await
@@ -458,7 +587,7 @@ impl MatrixHttpClient {
                 return Err(MatrixClientError::AuthFailed);
             }
             let challenge = www_authenticate(response.headers());
-            authorization = Some(authorization_for_challenge(
+            issued = Some(issue_authorization(
                 challenge.as_deref(),
                 username,
                 password,
@@ -467,6 +596,65 @@ impl MatrixHttpClient {
             )?);
             followups += 1;
         }
+    }
+
+    fn cached_authorization(
+        &self,
+        identity: &AuthIdentity,
+        username: &str,
+        password: &str,
+        url: &Url,
+    ) -> Option<Authorization> {
+        let mut sessions = self
+            .sessions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let outcome = match sessions.sessions.get_mut(identity)? {
+            AuthSession::Basic => Ok(Authorization::Basic),
+            AuthSession::Digest(prompt) => {
+                let uri = digest_uri(url);
+                let context = AuthContext::new(username, password, &uri);
+                prompt
+                    .respond(&context)
+                    .map(|header| Authorization::Digest(header.to_string()))
+                    .map_err(|_| ())
+            }
+        };
+        match outcome {
+            Ok(header) => {
+                sessions.touch(identity);
+                Some(header)
+            }
+            Err(()) => {
+                sessions.remove(identity);
+                None
+            }
+        }
+    }
+
+    fn store_session(&self, identity: &AuthIdentity, session: AuthSession) {
+        let mut sessions = self
+            .sessions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        sessions.insert(identity.clone(), session);
+    }
+
+    fn clear_session(&self, identity: &AuthIdentity) {
+        let mut sessions = self
+            .sessions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        sessions.remove(identity);
+    }
+
+    #[cfg(test)]
+    fn session_count(&self) -> usize {
+        self.sessions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .sessions
+            .len()
     }
 
     async fn send_get(
@@ -487,13 +675,63 @@ impl MatrixHttpClient {
                 request = request.header(AUTHORIZATION, header);
             }
         }
-        request.send().await.map_err(map_transport_error)
+        let started = std::time::Instant::now();
+        let path = url.path().to_string();
+        let session_reused = authorization.is_some();
+        match request.send().await {
+            Ok(response) => {
+                tracing::debug!(
+                    path = %path,
+                    session_reused,
+                    status = response.status().as_u16(),
+                    elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    "matrix http exchange"
+                );
+                Ok(response)
+            }
+            Err(error) => {
+                let mapped = map_transport_error(error);
+                tracing::debug!(
+                    path = %path,
+                    session_reused,
+                    error = %mapped,
+                    elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    "matrix http exchange"
+                );
+                Err(mapped)
+            }
+        }
     }
 }
 
 enum Authorization {
     Basic,
     Digest(String),
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct AuthIdentity {
+    host: String,
+    port: u16,
+    username: String,
+}
+
+enum AuthSession {
+    Basic,
+    Digest(WwwAuthenticateHeader),
+}
+
+struct IssuedAuth {
+    header: Authorization,
+    session: AuthSession,
+}
+
+fn auth_identity(url: &Url, username: &str) -> Option<AuthIdentity> {
+    Some(AuthIdentity {
+        host: url.host_str()?.to_string(),
+        port: url.port_or_known_default()?,
+        username: username.to_string(),
+    })
 }
 
 fn www_authenticate(headers: &HeaderMap) -> Option<String> {
@@ -505,13 +743,13 @@ fn www_authenticate(headers: &HeaderMap) -> Option<String> {
         .map(str::to_string)
 }
 
-fn authorization_for_challenge(
+fn issue_authorization(
     challenge: Option<&str>,
     username: &str,
     password: &str,
     url: &Url,
     followup: u8,
-) -> Result<Authorization, MatrixClientError> {
+) -> Result<IssuedAuth, MatrixClientError> {
     let Some(raw) = challenge else {
         return Err(MatrixClientError::AuthFailed);
     };
@@ -519,7 +757,10 @@ fn authorization_for_challenge(
         return digest_authorization(raw, username, password, url, followup);
     }
     if followup == 0 && starts_with_scheme(raw, "basic") {
-        return Ok(Authorization::Basic);
+        return Ok(IssuedAuth {
+            header: Authorization::Basic,
+            session: AuthSession::Basic,
+        });
     }
     Err(MatrixClientError::AuthFailed)
 }
@@ -530,7 +771,7 @@ fn digest_authorization(
     password: &str,
     url: &Url,
     followup: u8,
-) -> Result<Authorization, MatrixClientError> {
+) -> Result<IssuedAuth, MatrixClientError> {
     let mut prompt = digest_auth::parse(raw).map_err(|_| MatrixClientError::AuthFailed)?;
     if prompt.algorithm.algo != AlgorithmType::MD5 || prompt.algorithm.sess {
         return Err(MatrixClientError::AuthFailed);
@@ -547,7 +788,10 @@ fn digest_authorization(
     let header = prompt
         .respond(&context)
         .map_err(|_| MatrixClientError::AuthFailed)?;
-    Ok(Authorization::Digest(header.to_string()))
+    Ok(IssuedAuth {
+        header: Authorization::Digest(header.to_string()),
+        session: AuthSession::Digest(prompt),
+    })
 }
 
 fn digest_uri(url: &Url) -> String {
@@ -782,7 +1026,7 @@ mod tests {
     use super::{
         build_cgi_get_url, evaluate_basic_config_response, evaluate_count_response,
         evaluate_credential_response, evaluate_event_response, evaluate_matrix_response,
-        MatrixClientError, MatrixHttpClient, BASIC_CONFIG_PATH, USERS_PATH,
+        EventBatchQuery, MatrixClientError, MatrixHttpClient, BASIC_CONFIG_PATH, USERS_PATH,
     };
     use crate::matrix::client::response_codes::{FAILURE, REFERENCE_USER_ID_EXISTS, SUCCESS};
     use reqwest::StatusCode;
@@ -962,6 +1206,282 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cached_basic_session_uses_one_request() {
+        let server = mount_basic_config_server().await;
+        let client = MatrixHttpClient::new().unwrap();
+        let port = server.address().port();
+        client
+            .get_device_basic_config("127.0.0.1", port, "admin", "secret")
+            .await
+            .unwrap();
+        client
+            .get_device_basic_config("127.0.0.1", port, "admin", "secret")
+            .await
+            .unwrap();
+
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 3);
+        let third = requests[2]
+            .headers
+            .get("authorization")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(third.starts_with("Basic "));
+        assert!(!third.contains("secret"));
+    }
+
+    #[tokio::test]
+    async fn cached_basic_session_recovers_after_401() {
+        let server = MockServer::start().await;
+        let attempts = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        Mock::given(method("GET"))
+            .and(path("/device.cgi/device-basic-config"))
+            .and(query_param("action", "get"))
+            .and(BasicExceptAttempt {
+                attempts: attempts.clone(),
+                skipped: 2,
+            })
+            .respond_with(ResponseTemplate::new(200).set_body_string("Response-Code=0"))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/device.cgi/device-basic-config"))
+            .and(query_param("action", "get"))
+            .respond_with(
+                ResponseTemplate::new(401)
+                    .insert_header("WWW-Authenticate", "Basic realm=\"device\""),
+            )
+            .with_priority(2)
+            .mount(&server)
+            .await;
+
+        let client = MatrixHttpClient::new().unwrap();
+        let port = server.address().port();
+        client
+            .get_device_basic_config("127.0.0.1", port, "admin", "secret")
+            .await
+            .unwrap();
+        client
+            .get_device_basic_config("127.0.0.1", port, "admin", "secret")
+            .await
+            .unwrap();
+        client
+            .get_device_basic_config("127.0.0.1", port, "admin", "secret")
+            .await
+            .unwrap();
+
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 5);
+        assert!(requests[0].headers.get("authorization").is_none());
+        assert!(requests[2]
+            .headers
+            .get("authorization")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with("Basic "));
+        assert!(requests[4]
+            .headers
+            .get("authorization")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with("Basic "));
+        assert!(!requests[4]
+            .headers
+            .get("authorization")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .contains("secret"));
+    }
+
+    #[tokio::test]
+    async fn cached_digest_session_uses_one_request() {
+        let server = MockServer::start().await;
+        let challenge = concat!(
+            "Digest realm=\"Authenticate Yourself\", qop=\"auth\", ",
+            "nonce=\"testnonce\", opaque=\"abc\", algorithm=\"MD5\", stale=\"false\""
+        );
+        Mock::given(method("GET"))
+            .and(path("/device.cgi/device-basic-config"))
+            .and(query_param("action", "get"))
+            .and(digest_authorization())
+            .respond_with(ResponseTemplate::new(200).set_body_string("Response-Code=0"))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/device.cgi/device-basic-config"))
+            .and(query_param("action", "get"))
+            .respond_with(ResponseTemplate::new(401).insert_header("WWW-Authenticate", challenge))
+            .with_priority(2)
+            .mount(&server)
+            .await;
+
+        let client = MatrixHttpClient::new().unwrap();
+        let port = server.address().port();
+        client
+            .get_device_basic_config("127.0.0.1", port, "admin", "secret")
+            .await
+            .unwrap();
+        client
+            .get_device_basic_config("127.0.0.1", port, "admin", "secret")
+            .await
+            .unwrap();
+
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 3);
+        assert!(requests[0].headers.get("authorization").is_none());
+        let reused = requests[2]
+            .headers
+            .get("authorization")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(reused.starts_with("Digest "));
+        assert!(reused.contains("nc=00000002"));
+        assert!(!reused.contains("secret"));
+        assert!(!reused.to_ascii_lowercase().contains("basic "));
+    }
+
+    #[tokio::test]
+    async fn auth_sessions_are_not_shared_across_devices() {
+        let first = mount_basic_config_server().await;
+        let second = mount_basic_config_server().await;
+        let client = MatrixHttpClient::new().unwrap();
+        client
+            .get_device_basic_config("127.0.0.1", first.address().port(), "admin", "secret")
+            .await
+            .unwrap();
+        client
+            .get_device_basic_config("127.0.0.1", second.address().port(), "admin", "secret")
+            .await
+            .unwrap();
+        client
+            .get_device_basic_config("127.0.0.1", first.address().port(), "admin", "secret")
+            .await
+            .unwrap();
+
+        assert_eq!(first.received_requests().await.unwrap().len(), 3);
+        let second_requests = second.received_requests().await.unwrap();
+        assert_eq!(second_requests.len(), 2);
+        assert!(second_requests[0].headers.get("authorization").is_none());
+    }
+
+    async fn mount_basic_config_server() -> MockServer {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/device.cgi/device-basic-config"))
+            .and(query_param("action", "get"))
+            .and(basic_auth("admin", "secret"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("Response-Code=0"))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/device.cgi/device-basic-config"))
+            .and(query_param("action", "get"))
+            .respond_with(
+                ResponseTemplate::new(401)
+                    .insert_header("WWW-Authenticate", "Basic realm=\"device\""),
+            )
+            .with_priority(2)
+            .mount(&server)
+            .await;
+        server
+    }
+
+    struct BasicExceptAttempt {
+        attempts: std::sync::Arc<std::sync::atomic::AtomicU32>,
+        skipped: u32,
+    }
+
+    impl Match for BasicExceptAttempt {
+        fn matches(&self, request: &Request) -> bool {
+            let is_basic = request
+                .headers
+                .get("authorization")
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|value| value.starts_with("Basic "));
+            if !is_basic {
+                return false;
+            }
+            let attempt = self
+                .attempts
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                + 1;
+            attempt != self.skipped
+        }
+    }
+
+    #[test]
+    fn auth_sessions_stop_at_the_cap() {
+        let client = MatrixHttpClient::new().unwrap();
+        for index in 0..300 {
+            client.store_session(
+                &super::AuthIdentity {
+                    host: format!("10.0.0.{index}"),
+                    port: 80,
+                    username: "admin".to_string(),
+                },
+                super::AuthSession::Basic,
+            );
+        }
+        let kept = client.session_count();
+        assert_eq!(kept, super::MAX_AUTH_SESSIONS);
+        assert!(kept < 300);
+    }
+
+    #[test]
+    fn auth_session_cap_keeps_a_login_that_was_just_used() {
+        let client = MatrixHttpClient::new().unwrap();
+        let active = super::AuthIdentity {
+            host: "10.1.0.1".to_string(),
+            port: 80,
+            username: "admin".to_string(),
+        };
+        client.store_session(&active, super::AuthSession::Basic);
+        let mut oldest_idle = None;
+        for index in 0..255 {
+            let identity = super::AuthIdentity {
+                host: format!("10.2.0.{index}"),
+                port: 80,
+                username: "admin".to_string(),
+            };
+            if oldest_idle.is_none() {
+                oldest_idle = Some(identity.clone());
+            }
+            client.store_session(&identity, super::AuthSession::Basic);
+        }
+        assert_eq!(client.session_count(), super::MAX_AUTH_SESSIONS);
+        let active_url = reqwest::Url::parse("http://10.1.0.1/device.cgi/command").unwrap();
+        assert!(client
+            .cached_authorization(&active, "admin", "secret", &active_url)
+            .is_some());
+        client.store_session(
+            &super::AuthIdentity {
+                host: "10.9.9.9".to_string(),
+                port: 80,
+                username: "admin".to_string(),
+            },
+            super::AuthSession::Basic,
+        );
+        assert_eq!(client.session_count(), super::MAX_AUTH_SESSIONS);
+        assert!(client
+            .cached_authorization(&active, "admin", "secret", &active_url)
+            .is_some());
+        let idle = oldest_idle.expect("idle login");
+        let idle_url =
+            reqwest::Url::parse(&format!("http://{}/device.cgi/command", idle.host)).unwrap();
+        assert!(client
+            .cached_authorization(&idle, "admin", "secret", &idle_url)
+            .is_none());
+    }
+
+    #[tokio::test]
     async fn users_set_success_and_api_error() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -1072,9 +1592,9 @@ mod tests {
             "http://192.168.0.11/device.cgi/device-basic-config?action=get&format=xml",
         )
         .unwrap();
-        let authorization =
-            super::authorization_for_challenge(Some(challenge), "admin", "secret", &url, 0)
-                .unwrap();
+        let authorization = super::issue_authorization(Some(challenge), "admin", "secret", &url, 0)
+            .unwrap()
+            .header;
         match authorization {
             super::Authorization::Digest(header) => {
                 assert!(header.starts_with("Digest "));
@@ -1444,9 +1964,11 @@ mod tests {
                 server.address().port(),
                 "admin",
                 "secret",
-                "6",
-                "1141",
-                "5",
+                EventBatchQuery {
+                    roll_over_count: "6",
+                    seq_number: "1141",
+                    no_of_events: "5",
+                },
             )
             .await
             .unwrap();
@@ -1482,9 +2004,11 @@ mod tests {
                 server.address().port(),
                 "admin",
                 "secret",
-                "6",
-                "1141",
-                "5",
+                EventBatchQuery {
+                    roll_over_count: "6",
+                    seq_number: "1141",
+                    no_of_events: "5",
+                },
             )
             .await
             .unwrap_err();

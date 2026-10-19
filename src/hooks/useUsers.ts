@@ -43,7 +43,7 @@ export function useUsersQuery(enabled: boolean) {
 export function useImportUsers() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (bytes: number[]) => importUsers(bytes),
+    mutationFn: (bytes: Uint8Array) => importUsers(bytes),
     onSuccess: (result: ImportUsersResult) => {
       if (result.imported > 0) {
         void queryClient.invalidateQueries({ queryKey: ["users"] });

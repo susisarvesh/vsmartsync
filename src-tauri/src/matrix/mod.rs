@@ -21,6 +21,33 @@ pub(crate) mod events;
 pub mod models;
 
 pub use adapter::{MatrixAdapter, MatrixAdapterError, MatrixProbeError, SetUserParams};
+
+/// Process-wide Matrix HTTP client.
+///
+/// One client keeps the connection pool and the per-device auth session.
+/// Commands and the event poll share it. Tests build their own adapters.
+#[derive(Clone)]
+pub struct MatrixRuntime {
+    adapter: Option<MatrixAdapter>,
+}
+
+impl MatrixRuntime {
+    pub fn initialize() -> Self {
+        match MatrixAdapter::new() {
+            Ok(adapter) => Self {
+                adapter: Some(adapter),
+            },
+            Err(_) => {
+                tracing::warn!("matrix http client could not start");
+                Self { adapter: None }
+            }
+        }
+    }
+
+    pub fn adapter(&self) -> Option<MatrixAdapter> {
+        self.adapter.clone()
+    }
+}
 pub use enrollment::{
     capture_enroll_type, capture_increased, configured_reader, credential_present,
     diagnose_card_read, door_access_mode, parse_card_key_flags, parse_internal_card_format,
