@@ -97,6 +97,7 @@ pub fn run() {
             commands::assign_user_device,
             commands::remove_user_device,
             commands::sync_assigned_users,
+            commands::scan_matrix_devices,
             commands::create_device,
             commands::list_devices,
             commands::update_device,

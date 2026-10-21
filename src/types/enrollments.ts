@@ -69,6 +69,7 @@ export type EnrollmentSession = {
   identifierTypeLabel: string | null;
   cardNumber: string | null;
   identifierUnavailable: boolean;
+  captureFactor: string | null;
   startedAt: string;
   completedAt: string | null;
 };

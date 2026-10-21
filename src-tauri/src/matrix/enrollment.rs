@@ -16,6 +16,10 @@ pub enum HardwareEnrollType {
     BiometricThenCard,
     Face,
     DuressFinger,
+    /// Card `enrolluser`, then face `enrolluser`. Not a single device type code.
+    CardThenFace,
+    /// Face `enrolluser`, then card `enrolluser`. Not a single device type code.
+    FaceThenCard,
 }
 
 impl HardwareEnrollType {
@@ -27,6 +31,8 @@ impl HardwareEnrollType {
             Self::BiometricThenCard => "biometric_then_card",
             Self::Face => "face",
             Self::DuressFinger => "duress_finger",
+            Self::CardThenFace => "card_then_face",
+            Self::FaceThenCard => "face_then_card",
         }
     }
 
@@ -38,7 +44,14 @@ impl HardwareEnrollType {
             Self::BiometricThenCard => "Fingerprint then card",
             Self::Face => "Face",
             Self::DuressFinger => "Duress finger",
+            Self::CardThenFace => "Card + Face",
+            Self::FaceThenCard => "Face + Card",
         }
+    }
+
+    /// Card and face together are two `enrolluser` calls, chosen by [`capture_steps`].
+    pub fn is_two_step(self) -> bool {
+        matches!(self, Self::CardThenFace | Self::FaceThenCard)
     }
 
     /// Local credential rows that can be assigned when this enroll type is available.
@@ -53,6 +66,7 @@ impl HardwareEnrollType {
             Self::BiometricThenCard => &["biometric_card", "card"],
             Self::Face => &["face"],
             Self::DuressFinger => &["duress_finger"],
+            Self::CardThenFace | Self::FaceThenCard => &["face", "card"],
         }
     }
 
@@ -66,17 +80,21 @@ impl HardwareEnrollType {
             Self::BiometricThenCard => "biometric_card",
             Self::Face => "face",
             Self::DuressFinger => "duress_finger",
+            // Two-step saves a card row and a face row. This value is not stored.
+            Self::CardThenFace | Self::FaceThenCard => "face",
         }
     }
 
-    pub fn matrix_type(self) -> u8 {
+    /// Documented `enrolluser` type code. `None` for card-plus-face, which is two calls.
+    pub fn matrix_type(self) -> Option<u8> {
         match self {
-            Self::ReadOnlyCard => 0,
-            Self::SmartCard => 1,
-            Self::Biometric => 2,
-            Self::BiometricThenCard => 3,
-            Self::Face => 7,
-            Self::DuressFinger => 8,
+            Self::ReadOnlyCard => Some(0),
+            Self::SmartCard => Some(1),
+            Self::Biometric => Some(2),
+            Self::BiometricThenCard => Some(3),
+            Self::Face => Some(7),
+            Self::DuressFinger => Some(8),
+            Self::CardThenFace | Self::FaceThenCard => None,
         }
     }
 
@@ -90,6 +108,7 @@ impl HardwareEnrollType {
             Self::Biometric | Self::DuressFinger => &[("finger-count", "0")],
             Self::BiometricThenCard => &[("finger-count", "0"), ("card-count", "0")],
             Self::Face => &[("face-count", "0")],
+            Self::CardThenFace | Self::FaceThenCard => &[],
         }
     }
 
@@ -101,6 +120,8 @@ impl HardwareEnrollType {
             "biometric_then_card" => Some(Self::BiometricThenCard),
             "face" => Some(Self::Face),
             "duress_finger" => Some(Self::DuressFinger),
+            "card_then_face" => Some(Self::CardThenFace),
+            "face_then_card" => Some(Self::FaceThenCard),
             _ => None,
         }
     }
@@ -123,6 +144,122 @@ pub fn capture_enroll_type(
     } else {
         requested
     }
+}
+
+/// Which prompt the reader is waiting on during a two-step enrollment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureFactor {
+    Card,
+    Face,
+}
+
+impl CaptureFactor {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Card => "card",
+            Self::Face => "face",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "card" => Some(Self::Card),
+            "face" => Some(Self::Face),
+            _ => None,
+        }
+    }
+}
+
+/// One documented `enrolluser` call inside a session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CaptureStep {
+    /// 1-based position in the type's order, including a step that is already on the device.
+    pub index: u8,
+    pub factor: CaptureFactor,
+    pub enroll_type: HardwareEnrollType,
+}
+
+/// Card command for a combined enrollment. iCLASS stays type 0. MIFARE stays type 1.
+pub fn card_capture_type(reader_config: &str) -> HardwareEnrollType {
+    let requested = if reader_requests_smart_card(reader_config) {
+        HardwareEnrollType::SmartCard
+    } else {
+        HardwareEnrollType::ReadOnlyCard
+    };
+    capture_enroll_type(requested, reader_config)
+}
+
+/// Ordered captures for card-plus-face. `None` when the type is a single capture.
+pub fn capture_steps(
+    requested: HardwareEnrollType,
+    reader_config: &str,
+) -> Option<Vec<CaptureStep>> {
+    let card = card_capture_type(reader_config);
+    match requested {
+        HardwareEnrollType::CardThenFace => Some(vec![
+            CaptureStep {
+                index: 1,
+                factor: CaptureFactor::Card,
+                enroll_type: card,
+            },
+            CaptureStep {
+                index: 2,
+                factor: CaptureFactor::Face,
+                enroll_type: HardwareEnrollType::Face,
+            },
+        ]),
+        HardwareEnrollType::FaceThenCard => Some(vec![
+            CaptureStep {
+                index: 1,
+                factor: CaptureFactor::Face,
+                enroll_type: HardwareEnrollType::Face,
+            },
+            CaptureStep {
+                index: 2,
+                factor: CaptureFactor::Card,
+                enroll_type: card,
+            },
+        ]),
+        _ => None,
+    }
+}
+
+/// Steps still missing on the user. A factor already counted is not captured again.
+pub fn pending_capture_steps(
+    requested: HardwareEnrollType,
+    reader_config: &str,
+    counts: CredentialCounts,
+) -> Vec<CaptureStep> {
+    capture_steps(requested, reader_config)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|step| !credential_present(step.enroll_type, counts))
+        .collect()
+}
+
+/// Both factors are on the user. A factor that was already present does not have to increase again.
+pub fn combined_capture_complete(before: CredentialCounts, after: CredentialCounts) -> bool {
+    factor_satisfied(before.cards, after.cards) && factor_satisfied(before.faces, after.faces)
+}
+
+fn factor_satisfied(before: u32, after: u32) -> bool {
+    if before > 0 {
+        after > 0
+    } else {
+        after > before
+    }
+}
+
+fn reader_requests_smart_card(reader_config: &str) -> bool {
+    if config_field(reader_config, "reader1")
+        .and_then(|raw| raw.parse::<i32>().ok())
+        .is_some_and(|code| matches!(code, 3..=5))
+    {
+        return true;
+    }
+    config_field(reader_config, "reader3")
+        .and_then(|raw| raw.parse::<i32>().ok())
+        .is_some_and(|code| matches!(code, 3 | 4 | 6 | 10 | 13 | 14))
 }
 
 /// Types the device configuration reports as available, in display order.
@@ -172,6 +309,10 @@ pub fn supported_enroll_types(
     }
     if finger && (read_only_card || smart_card) {
         types.push(HardwareEnrollType::BiometricThenCard);
+    }
+    if face && (read_only_card || smart_card) {
+        types.push(HardwareEnrollType::CardThenFace);
+        types.push(HardwareEnrollType::FaceThenCard);
     }
     types
 }
@@ -231,6 +372,9 @@ pub fn credential_present(enroll_type: HardwareEnrollType, counts: CredentialCou
         HardwareEnrollType::ReadOnlyCard | HardwareEnrollType::SmartCard => counts.cards > 0,
         HardwareEnrollType::Biometric | HardwareEnrollType::DuressFinger => counts.fingers > 0,
         HardwareEnrollType::BiometricThenCard => counts.fingers > 0 || counts.cards > 0,
+        HardwareEnrollType::CardThenFace | HardwareEnrollType::FaceThenCard => {
+            counts.cards > 0 && counts.faces > 0
+        }
     }
 }
 
@@ -249,6 +393,9 @@ pub fn capture_increased(
         }
         HardwareEnrollType::BiometricThenCard => {
             after.fingers > before.fingers || after.cards > before.cards
+        }
+        HardwareEnrollType::CardThenFace | HardwareEnrollType::FaceThenCard => {
+            after.cards > before.cards && after.faces > before.faces
         }
     }
 }
@@ -1123,6 +1270,8 @@ mod tests {
         assert!(!types.contains(&HardwareEnrollType::ReadOnlyCard));
         assert!(!types.contains(&HardwareEnrollType::SmartCard));
         assert!(!types.contains(&HardwareEnrollType::BiometricThenCard));
+        assert!(!types.contains(&HardwareEnrollType::CardThenFace));
+        assert!(!types.contains(&HardwareEnrollType::FaceThenCard));
     }
 
     #[test]
@@ -1134,7 +1283,7 @@ mod tests {
             ),
             HardwareEnrollType::ReadOnlyCard
         );
-        assert_eq!(HardwareEnrollType::ReadOnlyCard.matrix_type(), 0);
+        assert_eq!(HardwareEnrollType::ReadOnlyCard.matrix_type(), Some(0));
         assert_eq!(
             super::capture_enroll_type(HardwareEnrollType::SmartCard, "reader1=3"),
             HardwareEnrollType::SmartCard
@@ -1142,6 +1291,63 @@ mod tests {
         assert_eq!(
             super::capture_enroll_type(HardwareEnrollType::Face, "reader1=4"),
             HardwareEnrollType::Face
+        );
+    }
+
+    #[test]
+    fn card_and_face_steps_follow_the_selected_order() {
+        use super::{capture_steps, pending_capture_steps, CaptureFactor, CredentialCounts};
+
+        let card_first = capture_steps(HardwareEnrollType::CardThenFace, "reader1=3").unwrap();
+        assert_eq!(card_first[0].factor, CaptureFactor::Card);
+        assert_eq!(card_first[0].enroll_type, HardwareEnrollType::SmartCard);
+        assert_eq!(card_first[0].enroll_type.matrix_type(), Some(1));
+        assert_eq!(card_first[1].factor, CaptureFactor::Face);
+        assert_eq!(card_first[1].index, 2);
+
+        let face_first = capture_steps(HardwareEnrollType::FaceThenCard, "reader1=2").unwrap();
+        assert_eq!(face_first[0].factor, CaptureFactor::Face);
+        assert_eq!(face_first[0].enroll_type.matrix_type(), Some(7));
+        assert_eq!(face_first[1].factor, CaptureFactor::Card);
+        assert_eq!(face_first[1].enroll_type, HardwareEnrollType::ReadOnlyCard);
+
+        let iclass = capture_steps(HardwareEnrollType::CardThenFace, "reader1=4").unwrap();
+        assert_eq!(iclass[0].enroll_type, HardwareEnrollType::ReadOnlyCard);
+        assert_eq!(iclass[0].enroll_type.matrix_type(), Some(0));
+        assert_eq!(iclass[1].enroll_type, HardwareEnrollType::Face);
+
+        let before = CredentialCounts::default();
+        let card_only = CredentialCounts {
+            cards: 1,
+            faces: 0,
+            fingers: 0,
+        };
+        let both = CredentialCounts {
+            cards: 1,
+            faces: 1,
+            fingers: 0,
+        };
+        assert!(!super::capture_increased(
+            HardwareEnrollType::CardThenFace,
+            before,
+            card_only
+        ));
+        assert!(super::capture_increased(
+            HardwareEnrollType::FaceThenCard,
+            before,
+            both
+        ));
+        assert!(!super::combined_capture_complete(before, card_only));
+        assert!(super::combined_capture_complete(before, both));
+        assert!(super::combined_capture_complete(card_only, both));
+
+        let pending =
+            pending_capture_steps(HardwareEnrollType::CardThenFace, "reader1=3", card_only);
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].factor, CaptureFactor::Face);
+        assert_eq!(pending[0].index, 2);
+        assert!(
+            pending_capture_steps(HardwareEnrollType::FaceThenCard, "reader1=3", both).is_empty()
         );
     }
 
@@ -1159,6 +1365,9 @@ mod tests {
         assert!(with_face.contains(&HardwareEnrollType::SmartCard));
         assert!(with_face.contains(&HardwareEnrollType::Face));
         assert!(!with_face.contains(&HardwareEnrollType::ReadOnlyCard));
+        assert!(with_face.contains(&HardwareEnrollType::CardThenFace));
+        assert!(with_face.contains(&HardwareEnrollType::FaceThenCard));
+        assert!(!types.contains(&HardwareEnrollType::CardThenFace));
     }
 
     #[test]
@@ -1167,6 +1376,8 @@ mod tests {
         assert!(types.contains(&HardwareEnrollType::Face));
         assert!(types.contains(&HardwareEnrollType::ReadOnlyCard));
         assert!(!types.contains(&HardwareEnrollType::Biometric));
+        assert!(types.contains(&HardwareEnrollType::CardThenFace));
+        assert!(types.contains(&HardwareEnrollType::FaceThenCard));
     }
 
     #[test]
@@ -1252,10 +1463,11 @@ mod tests {
             HardwareEnrollType::Face.count_fields(),
             &[("face-count", "0")]
         );
-        assert_eq!(HardwareEnrollType::SmartCard.matrix_type(), 1);
-        assert_eq!(HardwareEnrollType::ReadOnlyCard.matrix_type(), 0);
-        assert_eq!(HardwareEnrollType::Face.matrix_type(), 7);
-        assert_eq!(HardwareEnrollType::Biometric.matrix_type(), 2);
+        assert_eq!(HardwareEnrollType::SmartCard.matrix_type(), Some(1));
+        assert_eq!(HardwareEnrollType::ReadOnlyCard.matrix_type(), Some(0));
+        assert_eq!(HardwareEnrollType::Face.matrix_type(), Some(7));
+        assert_eq!(HardwareEnrollType::Biometric.matrix_type(), Some(2));
+        assert_eq!(HardwareEnrollType::CardThenFace.matrix_type(), None);
 
         assert_eq!(reader_label("reader1=3").as_deref(), Some("MiFare Reader"));
         assert_eq!(reader_label("reader3=1").as_deref(), Some("EM Prox Reader"));

@@ -1013,6 +1013,62 @@ fn build_cgi_get_url(
     Ok(url)
 }
 
+/// A host answered the documented basic-config path like a COSEC device.
+///
+/// `401` with a challenge is the usual locked device. `200` with a Matrix
+/// body is a device that answered without a login. Other HTTP servers are not
+/// a match.
+pub(crate) fn is_matrix_discovery_response(status: u16, has_challenge: bool, body: &str) -> bool {
+    if status == 401 && has_challenge {
+        return true;
+    }
+    if status != 200 {
+        return false;
+    }
+    let lower = body.to_ascii_lowercase();
+    lower.contains("response-code") || lower.contains("cosec")
+}
+
+pub(crate) fn discovery_device_name(body: &str) -> Option<String> {
+    let name = crate::matrix::enrollment::config_field(body, "name")?;
+    let name = name.trim();
+    let length = name.chars().count();
+    if length == 0 || length > 200 {
+        return None;
+    }
+    if name
+        .chars()
+        .any(|ch| ch.is_control() || matches!(ch, '<' | '>' | '/' | '\\'))
+    {
+        return None;
+    }
+    Some(name.to_string())
+}
+
+/// One unauthenticated read of `device-basic-config`. `Some` means this host
+/// looks like a Matrix device. The name is present only when the body included it.
+pub(crate) async fn probe_matrix_device(
+    client: &Client,
+    host: &str,
+    port: u16,
+) -> Option<Option<String>> {
+    let url = build_cgi_get_url(host, port, BASIC_CONFIG_PATH, &[("action", "get")]).ok()?;
+    let response = client.get(url).send().await.ok()?;
+    let status = response.status().as_u16();
+    let has_challenge = response
+        .headers()
+        .get(WWW_AUTHENTICATE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| !value.trim().is_empty());
+    let bytes = response.bytes().await.ok()?;
+    let slice = &bytes[..bytes.len().min(4_096)];
+    let body = String::from_utf8_lossy(slice);
+    if !is_matrix_discovery_response(status, has_challenge, &body) {
+        return None;
+    }
+    Some(discovery_device_name(&body))
+}
+
 fn map_transport_error(error: reqwest::Error) -> MatrixClientError {
     if error.is_timeout() {
         MatrixClientError::Timeout
@@ -2030,5 +2086,23 @@ mod tests {
             evaluate_event_response(StatusCode::OK, "Request failed: Incomplete command".into()),
             Err(MatrixClientError::BadResponse)
         );
+    }
+
+    #[test]
+    fn discovery_accepts_a_challenge_or_a_matrix_body() {
+        use super::{discovery_device_name, is_matrix_discovery_response};
+        assert!(is_matrix_discovery_response(401, true, ""));
+        assert!(!is_matrix_discovery_response(401, false, ""));
+        assert!(!is_matrix_discovery_response(404, true, "COSEC"));
+        assert!(is_matrix_discovery_response(
+            200,
+            false,
+            "Response-Code=0 name=Lobby Door"
+        ));
+        assert_eq!(
+            discovery_device_name("name=Lobby Door max-faces=2"),
+            Some("Lobby Door".to_string())
+        );
+        assert!(discovery_device_name("name=<script>").is_none());
     }
 }

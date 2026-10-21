@@ -17,6 +17,12 @@ export type Device = {
   updatedAt: string;
 };
 
+export type DiscoveredDevice = {
+  host: string;
+  port: number;
+  name: string | null;
+};
+
 export type CreateDeviceInput = {
   deviceName: string;
   host: string;

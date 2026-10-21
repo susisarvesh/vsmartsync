@@ -7,9 +7,16 @@
 //! **Deferred:** `set_card` (Card path not hardware-/example-verified), Sync,
 //! `device_users`, capability framework, retries, orchestration.
 
-use thiserror::Error;
+use std::net::Ipv4Addr;
+use std::sync::Arc;
+use std::time::Duration;
 
-use crate::matrix::client::{EventBatchQuery, MatrixClientError, MatrixHttpClient};
+use thiserror::Error;
+use tokio::sync::Semaphore;
+
+use crate::matrix::client::{
+    probe_matrix_device, EventBatchQuery, MatrixClientError, MatrixHttpClient,
+};
 use crate::matrix::enrollment::{
     config_field, credential_counts, face_only_door, parse_card_credential, parse_card_read,
     reported_enrollment, CredentialCounts, HardwareEnrollType, ParsedCardCredential,
@@ -88,11 +95,65 @@ pub struct CardConfigDocuments {
     pub internal_card_format: Option<String>,
 }
 
+/// One Matrix device found by an unauthenticated basic-config probe.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FoundMatrixDevice {
+    pub host: String,
+    pub port: u16,
+    pub name: Option<String>,
+}
+
 impl MatrixAdapter {
     pub fn new() -> Result<Self, MatrixProbeError> {
         Ok(Self {
             client: MatrixHttpClient::new().map_err(|_| MatrixProbeError::Unreachable)?,
         })
+    }
+
+    /// Probe each host on the documented device port. Hosts that do not answer
+    /// as a COSEC device are omitted. No password is sent.
+    pub async fn find_matrix_devices(&self, hosts: &[Ipv4Addr]) -> Vec<FoundMatrixDevice> {
+        let Ok(client) = reqwest::Client::builder()
+            .connect_timeout(Duration::from_millis(400))
+            .timeout(Duration::from_millis(900))
+            .redirect(reqwest::redirect::Policy::none())
+            .pool_max_idle_per_host(0)
+            .build()
+        else {
+            return Vec::new();
+        };
+        let client = Arc::new(client);
+        let permits = Arc::new(Semaphore::new(48));
+        let mut tasks = tokio::task::JoinSet::new();
+        for host in hosts {
+            let host = *host;
+            let client = Arc::clone(&client);
+            let permits = Arc::clone(&permits);
+            tasks.spawn(async move {
+                let Ok(_permit) = permits.acquire().await else {
+                    return None;
+                };
+                let host_text = host.to_string();
+                let name = probe_matrix_device(&client, &host_text, 80).await?;
+                Some(FoundMatrixDevice {
+                    host: host_text,
+                    port: 80,
+                    name,
+                })
+            });
+        }
+        let mut found = Vec::new();
+        while let Some(joined) = tasks.join_next().await {
+            if let Ok(Some(device)) = joined {
+                found.push(device);
+            }
+        }
+        found.sort_by(|left, right| {
+            let left_ip = left.host.parse::<Ipv4Addr>().ok();
+            let right_ip = right.host.parse::<Ipv4Addr>().ok();
+            left_ip.cmp(&right_ip)
+        });
+        found
     }
 
     /// Confirms the application can authenticate to the device via the
@@ -397,7 +458,10 @@ impl MatrixAdapter {
         enroll_type: HardwareEnrollType,
     ) -> Result<(), MatrixAdapterError> {
         let user_id = validate_user_id(matrix_user_id)?;
-        let type_code = enroll_type.matrix_type().to_string();
+        let Some(type_code) = enroll_type.matrix_type() else {
+            return Err(MatrixAdapterError::InvalidArgument);
+        };
+        let type_code = type_code.to_string();
         self.client
             .enroll_user(
                 host,

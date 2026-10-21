@@ -20,7 +20,9 @@ mod enrollment;
 pub(crate) mod events;
 pub mod models;
 
-pub use adapter::{MatrixAdapter, MatrixAdapterError, MatrixProbeError, SetUserParams};
+pub use adapter::{
+    FoundMatrixDevice, MatrixAdapter, MatrixAdapterError, MatrixProbeError, SetUserParams,
+};
 
 /// Process-wide Matrix HTTP client.
 ///
@@ -49,9 +51,10 @@ impl MatrixRuntime {
     }
 }
 pub use enrollment::{
-    capture_enroll_type, capture_increased, configured_reader, credential_present,
-    diagnose_card_read, door_access_mode, parse_card_key_flags, parse_internal_card_format,
-    parse_smart_card_format, reader_slots, CardReadAttempt, CardReaderFamily, CredentialCounts,
-    HardwareEnrollType, MatrixCardType, MatrixIdentifierType, ParsedCardCredential,
-    ReportedReaderSlot,
+    capture_enroll_type, capture_increased, capture_steps, combined_capture_complete,
+    configured_reader, credential_present, diagnose_card_read, door_access_mode,
+    parse_card_key_flags, parse_internal_card_format, parse_smart_card_format,
+    pending_capture_steps, reader_slots, CaptureFactor, CaptureStep, CardReadAttempt,
+    CardReaderFamily, CredentialCounts, HardwareEnrollType, MatrixCardType, MatrixIdentifierType,
+    ParsedCardCredential, ReportedReaderSlot,
 };

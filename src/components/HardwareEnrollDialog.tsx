@@ -29,6 +29,12 @@ import {
   useTestCard,
 } from "@/hooks/useEnrollments";
 import { useUserDevicesQuery, useUsersForDeviceQuery } from "@/hooks/useUsers";
+import {
+  cardPresentCopy,
+  isCardEnrollType,
+  isTwoStepEnrollType,
+  twoStepPrompt,
+} from "@/lib/enrollmentPrompt";
 import type { CardTestResult, EnrollmentSession } from "@/types/enrollments";
 
 type HardwareEnrollDialogProps = {
@@ -36,14 +42,6 @@ type HardwareEnrollDialogProps = {
   onOpenChange: (open: boolean) => void;
   fixedUser?: { id: string; username: string } | null;
 };
-
-function isCardType(enrollType: string): boolean {
-  return (
-    enrollType === "read_only_card" ||
-    enrollType === "smart_card" ||
-    enrollType === "biometric_then_card"
-  );
-}
 
 function isMifareReader(reader: string | null | undefined): boolean {
   return reader === "MIFARE";
@@ -87,10 +85,7 @@ function presentCopy(enrollType: string, reader: string | null | undefined): str
   ) {
     return "Please present your finger on the Matrix reader.";
   }
-  if (isMifareReader(reader)) {
-    return "Present your MIFARE card on the reader.";
-  }
-  return "Hold the card flat on the card reader on the door until it accepts it.";
+  return cardPresentCopy(reader);
 }
 
 function sessionMessage(
@@ -102,6 +97,9 @@ function sessionMessage(
     case "processing":
       return "Starting the reader.";
     case "waiting_for_card":
+      if (isTwoStepEnrollType(session.enrollType)) {
+        return twoStepPrompt(session.enrollType, session.captureFactor, reader);
+      }
       return presentCopy(session.enrollType, reader);
     case "verifying":
     case "saving":
@@ -152,7 +150,7 @@ export function HardwareEnrollDialog({
   const session = sessionQuery.data;
   const mifareReader = isMifareReader(readerStatus.data?.reader);
   const directEnrollment = enrollsWithoutCardRead(readerStatus.data?.reader);
-  const cardTestRequired = isCardType(enrollType) && !directEnrollment;
+  const cardTestRequired = isCardEnrollType(enrollType) && !directEnrollment;
   const waiting = Boolean(
     session &&
       (session.status === "starting" ||
@@ -473,7 +471,7 @@ export function HardwareEnrollDialog({
                 </p>
               ) : null}
               {session.status === "success" &&
-              isCardType(session.enrollType) &&
+              isCardEnrollType(session.enrollType) &&
               session.identifierUnavailable ? (
                 <p className="text-muted-foreground">
                   The device did not return a card number. The enrollment link was still saved.

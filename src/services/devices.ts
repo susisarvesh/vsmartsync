@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   CreateDeviceInput,
   Device,
+  DiscoveredDevice,
   UpdateDeviceInput,
 } from "../types/devices";
 
@@ -10,6 +11,10 @@ import type {
  * Do not call PostgreSQL or Matrix devices from React.
  * Never request or display device passwords or ciphertext.
  */
+export async function scanMatrixDevices(): Promise<DiscoveredDevice[]> {
+  return invoke<DiscoveredDevice[]>("scan_matrix_devices");
+}
+
 export async function listDevices(): Promise<Device[]> {
   return invoke<Device[]>("list_devices");
 }
@@ -90,6 +95,8 @@ export function deviceErrorMessage(code: string): string {
       return "The saved device password cannot be read. Choose Set Password, enter it again, then test the connection.";
     case "DATABASE_UNAVAILABLE":
       return "PostgreSQL is not connected.";
+    case "MATRIX_UNREACHABLE":
+      return "The network scan could not start.";
     default:
       return "Could not complete that device action.";
   }

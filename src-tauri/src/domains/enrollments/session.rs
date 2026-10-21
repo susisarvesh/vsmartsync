@@ -140,6 +140,8 @@ pub struct EnrollmentSession {
     pub identifier_type_label: Option<String>,
     pub card_number: Option<String>,
     pub identifier_unavailable: bool,
+    /// `card` or `face` while a two-step enrollment is waiting on that prompt.
+    pub capture_factor: Option<String>,
     pub started_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
 }
@@ -285,6 +287,11 @@ pub(crate) fn to_view(
         identifier_type_label,
         card_number: None,
         identifier_unavailable: record.identifier_unavailable,
+        capture_factor: record
+            .capture_factor
+            .as_deref()
+            .and_then(crate::matrix::CaptureFactor::parse)
+            .map(|factor| factor.as_str().to_string()),
         started_at: record.started_at,
         completed_at: record.completed_at,
     }

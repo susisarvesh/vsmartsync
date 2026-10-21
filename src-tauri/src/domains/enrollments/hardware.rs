@@ -38,10 +38,11 @@ use crate::domains::devices::DeviceStatus;
 use crate::domains::synchronization::matrix_display_name;
 use crate::domains::users::UserStatus;
 use crate::matrix::{
-    capture_enroll_type, capture_increased, configured_reader, diagnose_card_read,
-    door_access_mode, parse_card_key_flags, parse_internal_card_format, parse_smart_card_format,
-    reader_slots, CardReadAttempt, CardReaderFamily, HardwareEnrollType, MatrixAdapter,
-    MatrixAdapterError, ParsedCardCredential, ReportedReaderSlot, SetUserParams,
+    capture_enroll_type, capture_increased, capture_steps, combined_capture_complete,
+    configured_reader, diagnose_card_read, door_access_mode, parse_card_key_flags,
+    parse_internal_card_format, parse_smart_card_format, pending_capture_steps, reader_slots,
+    CaptureFactor, CaptureStep, CardReadAttempt, CardReaderFamily, HardwareEnrollType,
+    MatrixAdapter, MatrixAdapterError, ParsedCardCredential, ReportedReaderSlot, SetUserParams,
 };
 
 use super::gate::DeviceEnrollmentGuard;
@@ -566,6 +567,8 @@ struct SavedCapture {
     card_type: Option<String>,
     identifier_type: Option<String>,
     identifier_unavailable: bool,
+    /// Card command for a two-step enrollment. The face row is stored with it.
+    paired_card: Option<HardwareEnrollType>,
 }
 
 async fn run_capture(
@@ -603,7 +606,9 @@ async fn run_capture(
         name: matrix_display_name(&user.username),
         user_active: Some(true),
         enable_fr: match enroll_type {
-            HardwareEnrollType::Face => Some(true),
+            HardwareEnrollType::Face
+            | HardwareEnrollType::CardThenFace
+            | HardwareEnrollType::FaceThenCard => Some(true),
             _ => None,
         },
     };
@@ -633,6 +638,25 @@ async fn run_capture(
     } else {
         String::new()
     };
+    if enroll_type.is_two_step() {
+        return capture_two_factors(
+            sessions,
+            devices,
+            matrix,
+            session_id,
+            user_id,
+            device_id,
+            enroll_type,
+            &device.host,
+            port,
+            &device.username,
+            &password,
+            &mapping.matrix_user_id,
+            &reader_config,
+        )
+        .await;
+    }
+
     let capture_type = capture_enroll_type(enroll_type, &reader_config);
     if capture_type != enroll_type {
         tracing::info!(
@@ -787,6 +811,146 @@ async fn run_capture(
             .identifier_type
             .map(|value| value.as_str().to_string()),
         identifier_unavailable,
+        paired_card: None,
+    })
+}
+
+async fn capture_two_factors(
+    sessions: &EnrollmentSessionRepository,
+    devices: &DeviceRepository,
+    matrix: &MatrixAdapter,
+    session_id: Uuid,
+    user_id: Uuid,
+    device_id: Uuid,
+    enroll_type: HardwareEnrollType,
+    host: &str,
+    port: u16,
+    username: &str,
+    password: &str,
+    matrix_user_id: &str,
+    reader_config: &str,
+) -> Result<SavedCapture, EnrollmentError> {
+    let before = matrix
+        .credential_counts(host, port, username, password, matrix_user_id)
+        .await
+        .map_err(map_matrix_error)?;
+    let before_cards = matrix
+        .get_card_credential(host, port, username, password, matrix_user_id)
+        .await
+        .map(|card| card.card_numbers)
+        .unwrap_or_default();
+    if reader_in_menu(matrix, host, port, username, password, matrix_user_id).await {
+        quiet_for_reader().await;
+    }
+    let card_step = capture_steps(enroll_type, reader_config)
+        .and_then(|steps: Vec<CaptureStep>| {
+            steps
+                .into_iter()
+                .find(|step| step.factor == CaptureFactor::Card)
+                .map(|step| step.enroll_type)
+        })
+        .ok_or(EnrollmentError::InvalidType)?;
+    for step in pending_capture_steps(enroll_type, reader_config, before) {
+        let waiting = sessions
+            .mark_waiting_factor(session_id, step.factor.as_str(), Utc::now())
+            .await
+            .map_err(map_db_error)?;
+        if !waiting {
+            return Err(EnrollmentError::Cancelled);
+        }
+        tracing::info!(
+            enrollment_id = %session_id,
+            user_id = %user_id,
+            device_id = %device_id,
+            credential_type = enroll_type.as_str(),
+            step = step.index,
+            factor = step.factor.as_str(),
+            matrix_type = step.enroll_type.matrix_type(),
+            "enrollment_waiting"
+        );
+        capture_on_reader(
+            matrix,
+            host,
+            port,
+            username,
+            password,
+            matrix_user_id,
+            step.enroll_type,
+            device_id,
+            user_id,
+            before,
+            &before_cards,
+        )
+        .await?;
+    }
+
+    if !advance(sessions, session_id, EnrollmentSessionStatus::Verifying).await? {
+        return Err(EnrollmentError::Cancelled);
+    }
+    let mut after = matrix
+        .credential_counts(host, port, username, password, matrix_user_id)
+        .await
+        .map_err(map_matrix_error)?;
+    let mut parsed = ParsedCardCredential::default();
+    let mut identifier_unavailable;
+    match matrix
+        .get_card_credential(host, port, username, password, matrix_user_id)
+        .await
+    {
+        Ok(card) => {
+            let stored_new_card = card
+                .card_numbers
+                .iter()
+                .any(|number| !before_cards.iter().any(|existing| existing == number));
+            if stored_new_card && after.cards <= before.cards {
+                after.cards = before.cards.saturating_add(1);
+            }
+            identifier_unavailable = card.card_number.is_none();
+            parsed = card;
+        }
+        Err(error) => {
+            tracing::warn!(
+                enrollment_id = %session_id,
+                device_id = %device_id,
+                error = %map_matrix_error(error),
+                "card identifier was not returned after enrollment"
+            );
+            identifier_unavailable = true;
+        }
+    }
+    if !combined_capture_complete(before, after) {
+        return Err(EnrollmentError::NotCaptured);
+    }
+    if let Err(error) = matrix
+        .set_face_recognition_enabled(host, port, username, password, matrix_user_id, true)
+        .await
+    {
+        if !matches!(error, MatrixAdapterError::BadResponse) {
+            return Err(map_matrix_error(error));
+        }
+        tracing::warn!(
+            device_id = %device_id,
+            user_id = %user_id,
+            "face recognition flag was not confirmed; enrollment is still stored for the user"
+        );
+    }
+    record_online(devices, device_id).await;
+
+    let card_number = parsed
+        .card_number
+        .as_deref()
+        .and_then(|value| normalize_card_identifier(value).ok());
+    if card_number.is_none() {
+        identifier_unavailable = true;
+    }
+    Ok(SavedCapture {
+        card_number,
+        card_type: parsed.card_type.map(|value| value.as_str().to_string()),
+        identifier_type: parsed
+            .identifier_type
+            .map(|value| value.as_str().to_string()),
+        identifier_unavailable,
+        paired_card: Some(card_step),
     })
 }
 
@@ -802,6 +966,19 @@ async fn persist_capture(
     let still_open = advance(sessions, session_id, EnrollmentSessionStatus::Saving).await?;
     if !should_persist(!still_open, true) {
         return Err(EnrollmentError::Cancelled);
+    }
+    if let Some(card_step) = saved.paired_card {
+        return persist_paired_capture(
+            sessions,
+            vault,
+            session_id,
+            user_id,
+            device_id,
+            enroll_type,
+            card_step,
+            saved,
+        )
+        .await;
     }
     let credential_type = CredentialType::parse(enroll_type.credential_type())
         .map_err(|_| EnrollmentError::InvalidType)?;
@@ -849,6 +1026,7 @@ async fn persist_capture(
             saved.identifier_type.as_deref(),
             saved.identifier_unavailable,
             now,
+            None,
         )
         .await
     {
@@ -954,7 +1132,141 @@ fn stores_card(enroll_type: HardwareEnrollType) -> bool {
         HardwareEnrollType::ReadOnlyCard
             | HardwareEnrollType::SmartCard
             | HardwareEnrollType::BiometricThenCard
+            | HardwareEnrollType::CardThenFace
+            | HardwareEnrollType::FaceThenCard
     )
+}
+
+async fn persist_paired_capture(
+    sessions: &EnrollmentSessionRepository,
+    vault: &SecretVault,
+    session_id: Uuid,
+    user_id: Uuid,
+    device_id: Uuid,
+    enroll_type: HardwareEnrollType,
+    card_step: HardwareEnrollType,
+    saved: SavedCapture,
+) -> Result<Uuid, EnrollmentError> {
+    let credential_type = CredentialType::parse(card_step.credential_type())
+        .map_err(|_| EnrollmentError::InvalidType)?;
+    let reveal = saved.card_number.is_some();
+    let secret = saved
+        .card_number
+        .clone()
+        .unwrap_or_else(|| format!("enrolled:{session_id}"));
+    let digest = saved
+        .card_number
+        .as_deref()
+        .map(|number| card_identifier_digest(saved.identifier_type.as_deref(), number));
+    let card = hardware_credential_write(
+        vault,
+        user_id,
+        HardwareCredentialDraft {
+            credential_type,
+            secret,
+            card_type: saved.card_type.clone(),
+            identifier_type: saved.identifier_type.clone(),
+            reveal_hint: reveal,
+        },
+    )
+    .map_err(map_credential_error)?;
+    let face = hardware_credential_write(
+        vault,
+        user_id,
+        HardwareCredentialDraft {
+            credential_type: CredentialType::Face,
+            secret: format!("enrolled:{session_id}:face"),
+            card_type: None,
+            identifier_type: None,
+            reveal_hint: false,
+        },
+    )
+    .map_err(map_credential_error)?;
+    let now = Utc::now();
+    let card_enrollment = enrollment_write(user_id, card.id, device_id, digest, now);
+    let face_enrollment = enrollment_write(user_id, face.id, device_id, None, now);
+    match sessions
+        .finish_capture(
+            session_id,
+            &card,
+            &card_enrollment,
+            saved.card_type.as_deref(),
+            saved.identifier_type.as_deref(),
+            saved.identifier_unavailable,
+            now,
+            Some((&face, &face_enrollment)),
+        )
+        .await
+    {
+        Ok(FinishCapture::Saved(id)) => {
+            tracing::info!(
+                enrollment_id = %session_id,
+                assignment_id = %id,
+                user_id = %user_id,
+                device_id = %device_id,
+                credential_type = enroll_type.as_str(),
+                "credential_saved"
+            );
+            tracing::info!(
+                enrollment_id = %session_id,
+                user_id = %user_id,
+                device_id = %device_id,
+                credential_type = enroll_type.as_str(),
+                result = "success",
+                "enrollment_completed"
+            );
+            Ok(id)
+        }
+        Ok(FinishCapture::Skipped) => Err(EnrollmentError::Cancelled),
+        Err(error) if error.is_unique_violation() => {
+            close_session(
+                sessions,
+                session_id,
+                EnrollmentSessionStatus::Failed,
+                "ENROLLMENT_DUPLICATE",
+                user_id,
+                device_id,
+                enroll_type.as_str(),
+            )
+            .await;
+            Err(EnrollmentError::Duplicate)
+        }
+        Err(error) => {
+            close_session(
+                sessions,
+                session_id,
+                EnrollmentSessionStatus::PersistenceFailed,
+                "ENROLLMENT_PERSISTENCE_FAILED",
+                user_id,
+                device_id,
+                enroll_type.as_str(),
+            )
+            .await;
+            Err(map_db_error(error))
+        }
+    }
+}
+
+fn enrollment_write(
+    user_id: Uuid,
+    credential_id: Uuid,
+    device_id: Uuid,
+    identifier_digest: Option<Vec<u8>>,
+    now: chrono::DateTime<Utc>,
+) -> EnrollmentWriteRecord {
+    EnrollmentWriteRecord {
+        id: Uuid::new_v4(),
+        user_id,
+        credential_id,
+        device_id,
+        status: EnrollmentStatus::Active.as_str().to_string(),
+        cancelled_at: None,
+        revoked_at: None,
+        activated_at: Some(now),
+        identifier_digest,
+        created_at: now,
+        updated_at: now,
+    }
 }
 
 fn reader_is_busy(error: &MatrixAdapterError) -> bool {

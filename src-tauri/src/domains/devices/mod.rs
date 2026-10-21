@@ -4,6 +4,7 @@
 //! Does not own enrollment, sync, credentials, capability discovery, or Matrix CGI
 //! beyond the connection probe.
 
+mod scan;
 mod service;
 
 use chrono::{DateTime, Utc};
@@ -11,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
+pub use scan::{scan_local_matrix_devices, DiscoveredDevice};
 pub use service::{
     activate_device, create_device, deactivate_device, list_devices, set_device_password,
     test_device_connection, update_device,

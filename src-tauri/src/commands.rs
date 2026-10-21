@@ -10,7 +10,7 @@ use crate::database::repositories::{
 };
 use crate::database::{DatabaseRuntime, DatabaseStatus};
 use crate::domains::credentials::{self, Credential, CredentialError, CredentialListFilter};
-use crate::domains::devices::{self, Device, DeviceError};
+use crate::domains::devices::{self, Device, DeviceError, DiscoveredDevice};
 use crate::domains::enrollments::{
     self, CardRead, CardReaderStatus, CardTestResult, DeviceEnrollmentGate,
     DeviceEnrollmentOptions, Enrollment, EnrollmentError, EnrollmentListFilter, EnrollmentSession,
@@ -282,6 +282,17 @@ pub async fn sync_assigned_users(
     )
     .await
     .map_err(sync_error_to_command)
+}
+
+#[tauri::command]
+pub async fn scan_matrix_devices(
+    matrix_runtime: tauri::State<'_, MatrixRuntime>,
+) -> Result<Vec<DiscoveredDevice>, String> {
+    tracing::info!(command = "scan_matrix_devices", "frontend invoked rust");
+    let matrix = matrix_runtime
+        .adapter()
+        .ok_or_else(|| "MATRIX_UNREACHABLE".to_string())?;
+    Ok(devices::scan_local_matrix_devices(&matrix).await)
 }
 
 #[tauri::command]

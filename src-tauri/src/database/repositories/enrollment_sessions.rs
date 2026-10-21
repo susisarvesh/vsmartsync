@@ -20,6 +20,7 @@ const SESSION_COLUMNS: &str = r#"
     s.card_type,
     s.identifier_type,
     s.identifier_unavailable,
+    s.capture_factor,
     s.started_at,
     s.completed_at,
     s.created_at,
@@ -136,6 +137,40 @@ impl EnrollmentSessionRepository {
         Ok(result.rows_affected() > 0)
     }
 
+    /// Show the card or face prompt. A cancel or terminal status wins.
+    pub async fn mark_waiting_factor(
+        &self,
+        id: Uuid,
+        factor: &str,
+        updated_at: DateTime<Utc>,
+    ) -> Result<bool, DatabaseError> {
+        let result = sqlx::query(
+            r#"
+            UPDATE enrollment_sessions
+            SET
+                status = 'waiting_for_card',
+                capture_factor = $2,
+                error_code = NULL,
+                updated_at = $3
+            WHERE id = $1
+              AND status IN (
+                  'starting',
+                  'waiting_for_card',
+                  'processing',
+                  'verifying',
+                  'saving'
+              )
+            "#,
+        )
+        .bind(id)
+        .bind(factor)
+        .bind(updated_at)
+        .execute(&self.pool)
+        .await
+        .map_err(DatabaseError::Query)?;
+        Ok(result.rows_affected() > 0)
+    }
+
     /// Insert the credential and assignment only if the session was not cancelled.
     ///
     /// The transaction stays closed around the physical card wait. It covers
@@ -150,6 +185,7 @@ impl EnrollmentSessionRepository {
         identifier_type: Option<&str>,
         identifier_unavailable: bool,
         updated_at: DateTime<Utc>,
+        face: Option<(&CredentialWriteRecord, &EnrollmentWriteRecord)>,
     ) -> Result<FinishCapture, DatabaseError> {
         let mut tx = self.pool.begin().await.map_err(DatabaseError::Query)?;
         let status = sqlx::query_scalar::<_, String>(
@@ -164,54 +200,13 @@ impl EnrollmentSessionRepository {
             return Ok(FinishCapture::Skipped);
         }
 
-        sqlx::query(
-            r#"
-            INSERT INTO credentials (
-                id, user_id, type, value_ciphertext, value_digest,
-                display_hint, card_type, identifier_type, status, created_at, updated_at
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-            "#,
-        )
-        .bind(credential.id)
-        .bind(credential.user_id)
-        .bind(&credential.credential_type)
-        .bind(&credential.value_ciphertext)
-        .bind(&credential.value_digest)
-        .bind(&credential.display_hint)
-        .bind(&credential.card_type)
-        .bind(&credential.identifier_type)
-        .bind(&credential.status)
-        .bind(credential.created_at)
-        .bind(credential.updated_at)
-        .execute(&mut *tx)
-        .await
-        .map_err(DatabaseError::Query)?;
+        insert_credential(&mut tx, credential).await?;
+        insert_enrollment(&mut tx, enrollment).await?;
 
-        sqlx::query(
-            r#"
-            INSERT INTO enrollments (
-                id, user_id, credential_id, device_id, status,
-                cancelled_at, revoked_at, activated_at, identifier_digest,
-                created_at, updated_at
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-            "#,
-        )
-        .bind(enrollment.id)
-        .bind(enrollment.user_id)
-        .bind(enrollment.credential_id)
-        .bind(enrollment.device_id)
-        .bind(&enrollment.status)
-        .bind(enrollment.cancelled_at)
-        .bind(enrollment.revoked_at)
-        .bind(enrollment.activated_at)
-        .bind(&enrollment.identifier_digest)
-        .bind(enrollment.created_at)
-        .bind(enrollment.updated_at)
-        .execute(&mut *tx)
-        .await
-        .map_err(DatabaseError::Query)?;
+        if let Some((face_credential, face_enrollment)) = face {
+            insert_credential(&mut tx, face_credential).await?;
+            insert_enrollment(&mut tx, face_enrollment).await?;
+        }
 
         sqlx::query(
             r#"
@@ -257,4 +252,65 @@ fn session_is_open(status: &str) -> bool {
         status,
         "starting" | "waiting_for_card" | "processing" | "verifying" | "saving"
     )
+}
+
+async fn insert_credential(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    credential: &CredentialWriteRecord,
+) -> Result<(), DatabaseError> {
+    sqlx::query(
+        r#"
+        INSERT INTO credentials (
+            id, user_id, type, value_ciphertext, value_digest,
+            display_hint, card_type, identifier_type, status, created_at, updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        "#,
+    )
+    .bind(credential.id)
+    .bind(credential.user_id)
+    .bind(&credential.credential_type)
+    .bind(&credential.value_ciphertext)
+    .bind(&credential.value_digest)
+    .bind(&credential.display_hint)
+    .bind(&credential.card_type)
+    .bind(&credential.identifier_type)
+    .bind(&credential.status)
+    .bind(credential.created_at)
+    .bind(credential.updated_at)
+    .execute(&mut **tx)
+    .await
+    .map_err(DatabaseError::Query)?;
+    Ok(())
+}
+
+async fn insert_enrollment(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    enrollment: &EnrollmentWriteRecord,
+) -> Result<(), DatabaseError> {
+    sqlx::query(
+        r#"
+        INSERT INTO enrollments (
+            id, user_id, credential_id, device_id, status,
+            cancelled_at, revoked_at, activated_at, identifier_digest,
+            created_at, updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        "#,
+    )
+    .bind(enrollment.id)
+    .bind(enrollment.user_id)
+    .bind(enrollment.credential_id)
+    .bind(enrollment.device_id)
+    .bind(&enrollment.status)
+    .bind(enrollment.cancelled_at)
+    .bind(enrollment.revoked_at)
+    .bind(enrollment.activated_at)
+    .bind(&enrollment.identifier_digest)
+    .bind(enrollment.created_at)
+    .bind(enrollment.updated_at)
+    .execute(&mut **tx)
+    .await
+    .map_err(DatabaseError::Query)?;
+    Ok(())
 }

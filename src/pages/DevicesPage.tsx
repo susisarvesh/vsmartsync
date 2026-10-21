@@ -4,6 +4,7 @@ import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { MoreHorizontal, Plus, Search } from "lucide-react";
 import { PageHeader, EmptyState, ErrorState } from "@/components/layout/PageHeader";
+import { NetworkScanDialog } from "@/components/NetworkScanDialog";
 import { ConnectionStatusBadge, StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import {
@@ -115,6 +116,7 @@ export function DevicesPage({ enabled }: DevicesPageProps) {
   const [deactivateTarget, setDeactivateTarget] = useState<Device | null>(null);
   const [passwordDevice, setPasswordDevice] = useState<Device | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [scanOpen, setScanOpen] = useState(false);
 
   const createForm = useForm<CreateForm>({
     resolver: zodResolver(createSchema),
@@ -311,10 +313,19 @@ export function DevicesPage({ enabled }: DevicesPageProps) {
         title="Devices"
         description="Register devices with a name, network address, and optional MAC. New devices start Active. Model stays blank until configuration discovery."
         action={
-          <Button type="button" onClick={() => setCreateOpen(true)}>
-            <Plus className="h-4 w-4" aria-hidden />
-            Add Device
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setScanOpen(true)}
+            >
+              Auto scan
+            </Button>
+            <Button type="button" onClick={() => setCreateOpen(true)}>
+              <Plus className="h-4 w-4" aria-hidden />
+              Add Device
+            </Button>
+          </div>
         }
       />
 
@@ -506,6 +517,11 @@ export function DevicesPage({ enabled }: DevicesPageProps) {
         </div>
       ) : null}
 
+      <NetworkScanDialog
+        open={scanOpen}
+        onOpenChange={setScanOpen}
+        existing={devicesQuery.data ?? []}
+      />
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent>
           <DialogHeader>

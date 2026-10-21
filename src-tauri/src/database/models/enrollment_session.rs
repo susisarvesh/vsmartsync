@@ -17,6 +17,8 @@ pub struct EnrollmentSessionRecord {
     pub card_type: Option<String>,
     pub identifier_type: Option<String>,
     pub identifier_unavailable: bool,
+    /// `card` or `face` while a two-step enrollment is waiting on that prompt.
+    pub capture_factor: Option<String>,
     pub started_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
