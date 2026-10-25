@@ -27,8 +27,10 @@ export function AppShell({
   children,
 }: AppShellProps) {
   const [navigationOpen, setNavigationOpen] = useState(false);
+  const [labelsVisible, setLabelsVisible] = useState(false);
   const openTimer = useRef<number | null>(null);
   const closeTimer = useRef<number | null>(null);
+  const labelTimer = useRef<number | null>(null);
 
   useEffect(() => {
     document.title = `${pageTitle(route)} | Vsmart Sync`;
@@ -42,6 +44,9 @@ export function AppShell({
       if (closeTimer.current != null) {
         window.clearTimeout(closeTimer.current);
       }
+      if (labelTimer.current != null) {
+        window.clearTimeout(labelTimer.current);
+      }
     };
   }, []);
 
@@ -54,16 +59,26 @@ export function AppShell({
       window.clearTimeout(closeTimer.current);
       closeTimer.current = null;
     }
+    if (labelTimer.current != null) {
+      window.clearTimeout(labelTimer.current);
+      labelTimer.current = null;
+    }
   }
 
   function openNavigation() {
     clearTimers();
-    openTimer.current = window.setTimeout(() => setNavigationOpen(true), 80);
+    openTimer.current = window.setTimeout(() => {
+      setLabelsVisible(true);
+      setNavigationOpen(true);
+    }, 80);
   }
 
   function closeNavigation() {
     clearTimers();
-    closeTimer.current = window.setTimeout(() => setNavigationOpen(false), 160);
+    closeTimer.current = window.setTimeout(() => {
+      setNavigationOpen(false);
+      labelTimer.current = window.setTimeout(() => setLabelsVisible(false), 300);
+    }, 160);
   }
 
   return (
@@ -77,7 +92,7 @@ export function AppShell({
           navigationOpen ? "w-64" : "w-16",
         )}
       >
-        <AppSidebar route={route} expanded={navigationOpen} onNavigate={onNavigate} />
+        <AppSidebar route={route} expanded={labelsVisible} onNavigate={onNavigate} />
       </div>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <AppTopBar

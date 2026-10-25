@@ -35,7 +35,7 @@ export function AppSidebar({ route, expanded, onNavigate }: AppSidebarProps) {
   const usersExpanded = expanded && (usersOpen || usersActive);
 
   return (
-    <aside className="flex h-full w-full flex-col">
+    <aside className={cn("flex h-full shrink-0 flex-col", expanded ? "w-64" : "w-full")}>
       <div className="shrink-0 overflow-hidden border-b border-slate-200 bg-white">
         <button
           type="button"
