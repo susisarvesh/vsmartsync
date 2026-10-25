@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { Search } from "lucide-react";
+import { DeviceArtwork } from "@/components/devices/DeviceArtwork";
 import { EmptyState, ErrorState, PageHeader } from "@/components/layout/PageHeader";
+import { FilterBar, PageControls, ResultSummary, SearchField } from "@/components/lists/ListControls";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -22,6 +22,7 @@ import {
   useUsersForDeviceQuery,
   useUsersQuery,
 } from "@/hooks/useUsers";
+import { usePagedItems } from "@/lib/paging";
 import { syncErrorMessage, type SyncUsersResult } from "@/services/sync";
 
 type AssignDevicePageProps = {
@@ -57,7 +58,10 @@ export function AssignDevicePage({ enabled, focusUserId = null }: AssignDevicePa
       }
       return (
         user.username.toLowerCase().includes(query) ||
-        (user.matrixUserId ?? "").toLowerCase().includes(query)
+        (user.fullName ?? "").toLowerCase().includes(query) ||
+        (user.shortName ?? "").toLowerCase().includes(query) ||
+        (user.matrixUserId ?? "").toLowerCase().includes(query) ||
+        String(user.referenceId ?? "").includes(query)
       );
     });
   }, [search, usersQuery.data]);
@@ -76,7 +80,8 @@ export function AssignDevicePage({ enabled, focusUserId = null }: AssignDevicePa
     );
   }
 
-  const selectableIds = filteredUsers
+  const userPage = usePagedItems(filteredUsers, 50, `${search}|${deviceId}`);
+  const selectableIds = userPage.slice
     .filter((user) => !assignedUserIds.has(user.id))
     .map((user) => user.id);
   const allSelectableChecked =
@@ -178,10 +183,7 @@ export function AssignDevicePage({ enabled, focusUserId = null }: AssignDevicePa
   if (!enabled) {
     return (
       <div>
-        <PageHeader
-          title="Enrollment"
-          description="Assign an imported person to a device, then capture a card or face on the reader."
-        />
+        <PageHeader description="Assign an imported person to a device, then capture a card or face on the reader." />
         <ErrorState
           title="Database required"
           description="Connect local PostgreSQL from Dashboard before assigning users."
@@ -193,7 +195,6 @@ export function AssignDevicePage({ enabled, focusUserId = null }: AssignDevicePa
   return (
     <div>
       <PageHeader
-        title="Enrollment"
         description="Choose a device and the imported people. Assign sends their ID and reference id to that device. Enroll on reader captures a card or face."
         action={
           <div className="flex flex-wrap gap-2">
@@ -279,18 +280,34 @@ export function AssignDevicePage({ enabled, focusUserId = null }: AssignDevicePa
 
       {deviceId ? (
         <>
-          <div className="relative mb-3 max-w-sm">
-            <Search
-              className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-              aria-hidden
-            />
-            <Input
+          {selectedDevice ? (
+            <div className="mb-3 flex items-center gap-3 rounded-lg border border-border bg-card p-3">
+              <DeviceArtwork model={selectedDevice.deviceModel} />
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold">{selectedDevice.deviceName}</p>
+                <p className="text-xs text-muted-foreground">
+                  {selectedDevice.deviceModel ?? "Model not identified yet"} · {selectedDevice.host}:
+                  {selectedDevice.port}
+                </p>
+              </div>
+            </div>
+          ) : null}
+          <FilterBar>
+            <SearchField
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search users…"
-              className="pl-8"
-              aria-label="Search users"
+              onChange={setSearch}
+              placeholder="Search name, ID, or reference"
+              label="Search users"
             />
+          </FilterBar>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <ResultSummary
+              start={userPage.start}
+              count={userPage.slice.length}
+              total={userPage.total}
+              noun="people"
+            />
+            <PageControls page={userPage.page} pageCount={userPage.pageCount} onPage={userPage.setPage} />
           </div>
 
           {usersQuery.isLoading || assignedQuery.isLoading ? (
@@ -345,7 +362,7 @@ export function AssignDevicePage({ enabled, focusUserId = null }: AssignDevicePa
                     <th className="w-10 px-3 py-2 font-medium">
                       <input
                         type="checkbox"
-                        aria-label="Select all users not yet assigned"
+                        aria-label="Select people on this page who are not assigned"
                         checked={allSelectableChecked}
                         disabled={selectableIds.length === 0}
                         onChange={toggleAllSelectable}
@@ -358,7 +375,7 @@ export function AssignDevicePage({ enabled, focusUserId = null }: AssignDevicePa
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredUsers.map((user) => {
+                  {userPage.slice.map((user) => {
                     const alreadyAssigned = assignedUserIds.has(user.id);
                     const checked =
                       alreadyAssigned || selectedUserIds.includes(user.id);

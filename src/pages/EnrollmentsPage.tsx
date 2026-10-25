@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
-import { MoreHorizontal, Plus, Search } from "lucide-react";
+import { MoreHorizontal, Plus } from "lucide-react";
 import { PageHeader, EmptyState, ErrorState } from "@/components/layout/PageHeader";
+import { FilterBar, PageControls, ResultSummary, SearchField } from "@/components/lists/ListControls";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,7 +19,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -36,7 +36,7 @@ import {
   useRevokeEnrollment,
 } from "@/hooks/useEnrollments";
 import { HardwareEnrollDialog } from "@/components/HardwareEnrollDialog";
-import { useUsersQuery } from "@/hooks/useUsers";
+import { usePagedItems } from "@/lib/paging";
 import { formatDateTime } from "@/lib/utils";
 import type { Enrollment, EnrollmentStatus } from "@/types/enrollments";
 
@@ -95,10 +95,8 @@ export function EnrollmentsPage({
   embedded = false,
 }: EnrollmentsPageProps) {
   const { toast } = useToast();
-  const usersQuery = useUsersQuery(enabled);
   const devicesQuery = useDevicesQuery(enabled);
   const [search, setSearch] = useState("");
-  const [userFilter, setUserFilter] = useState("all");
   const [deviceFilter, setDeviceFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<"all" | EnrollmentStatus>(
     "all",
@@ -109,12 +107,11 @@ export function EnrollmentsPage({
 
   const listFilter = useMemo(
     () => ({
-      userId: userFilter === "all" ? undefined : userFilter,
       deviceId: deviceFilter === "all" ? undefined : deviceFilter,
       status: statusFilter === "all" ? undefined : statusFilter,
       limit: 200,
     }),
-    [userFilter, deviceFilter, statusFilter],
+    [deviceFilter, statusFilter],
   );
 
   const enrollmentsQuery = useEnrollmentsQuery(enabled, listFilter);
@@ -137,6 +134,11 @@ export function EnrollmentsPage({
       );
     });
   }, [enrollmentsQuery.data, search]);
+  const enrollmentPage = usePagedItems(
+    filtered,
+    50,
+    `${search}|${deviceFilter}|${statusFilter}`,
+  );
 
   async function onConfirmCancel() {
     if (!cancelTarget) {
@@ -233,33 +235,13 @@ export function EnrollmentsPage({
         />
       )}
 
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <div className="relative min-w-[12rem] flex-1">
-          <Search
-            className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-            aria-hidden
-          />
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search enrollments…"
-            className="pl-8"
-            aria-label="Search enrollments"
-          />
-        </div>
-        <Select value={userFilter} onValueChange={setUserFilter}>
-          <SelectTrigger className="w-40" aria-label="Filter by user">
-            <SelectValue placeholder="User" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All users</SelectItem>
-            {(usersQuery.data ?? []).map((user) => (
-              <SelectItem key={user.id} value={user.id}>
-                {user.username}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      <FilterBar>
+        <SearchField
+          value={search}
+          onChange={setSearch}
+          placeholder="Search person, device, or credential"
+          label="Search enrollments"
+        />
         <Select value={deviceFilter} onValueChange={setDeviceFilter}>
           <SelectTrigger className="w-40" aria-label="Filter by device">
             <SelectValue placeholder="Device" />
@@ -291,6 +273,19 @@ export function EnrollmentsPage({
             <SelectItem value="revoked">Revoked</SelectItem>
           </SelectContent>
         </Select>
+      </FilterBar>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <ResultSummary
+          start={enrollmentPage.start}
+          count={enrollmentPage.slice.length}
+          total={enrollmentPage.total}
+          noun="enrollments"
+        />
+        <PageControls
+          page={enrollmentPage.page}
+          pageCount={enrollmentPage.pageCount}
+          onPage={enrollmentPage.setPage}
+        />
       </div>
 
       {enrollmentsQuery.isLoading ? (
@@ -329,42 +324,45 @@ export function EnrollmentsPage({
       ) : null}
 
       {filtered.length > 0 ? (
-        <div className="overflow-x-auto rounded-lg border border-border bg-card">
-          <table className="w-full border-collapse text-sm">
+        <div className="overflow-hidden rounded-lg border border-border bg-card">
+          <table className="w-full table-fixed border-collapse text-sm">
             <thead className="bg-muted/60 text-left text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
-                <th className="px-3 py-2 font-medium">User</th>
-                <th className="px-3 py-2 font-medium">Credential</th>
-                <th className="px-3 py-2 font-medium">Device</th>
-                <th className="px-3 py-2 font-medium">Status</th>
-                <th className="px-3 py-2 font-medium">Updated</th>
-                <th className="px-3 py-2 font-medium">
+                <th className="w-[26%] px-3 py-2 font-medium">User</th>
+                <th className="w-[18%] px-3 py-2 font-medium">Credential</th>
+                <th className="w-[26%] px-3 py-2 font-medium">Device</th>
+                <th className="w-[12%] px-3 py-2 font-medium">Status</th>
+                <th className="w-[14%] px-3 py-2 font-medium">Updated</th>
+                <th className="w-10 px-3 py-2 font-medium">
                   <span className="sr-only">Actions</span>
                 </th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((enrollment) => (
+              {enrollmentPage.slice.map((enrollment) => (
                 <tr key={enrollment.id} className="border-t border-border">
-                  <td className="px-3 py-2 font-medium text-foreground">
+                  <td className="max-w-0 truncate px-3 py-2 font-medium text-foreground" title={enrollment.userName}>
                     {enrollment.userName}
                   </td>
-                  <td className="px-3 py-2 text-muted-foreground">
+                  <td
+                    className="max-w-0 truncate px-3 py-2 text-muted-foreground"
+                    title={credentialLabel(enrollment.credentialType, enrollment.maskedValue)}
+                  >
                     {credentialLabel(
                       enrollment.credentialType,
                       enrollment.maskedValue,
                     )}
                   </td>
-                  <td className="px-3 py-2 text-muted-foreground">
+                  <td className="max-w-0 truncate px-3 py-2 text-muted-foreground" title={enrollment.deviceName}>
                     {enrollment.deviceName}
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="whitespace-nowrap px-3 py-2">
                     <EnrollmentStatusBadge status={enrollment.status} />
                   </td>
-                  <td className="px-3 py-2 text-muted-foreground">
+                  <td className="truncate px-3 py-2 text-muted-foreground">
                     {formatDateTime(enrollment.updatedAt)}
                   </td>
-                  <td className="px-3 py-2 text-right">
+                  <td className="px-2 py-2 text-right">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button

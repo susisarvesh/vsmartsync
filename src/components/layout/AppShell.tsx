@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AppSidebar } from "@/components/layout/AppSidebar";
 import { AppTopBar } from "@/components/layout/AppTopBar";
 import type { DatabaseStatus } from "@/types/database";
@@ -27,40 +27,57 @@ export function AppShell({
   children,
 }: AppShellProps) {
   const [navigationOpen, setNavigationOpen] = useState(false);
+  const openTimer = useRef<number | null>(null);
+  const closeTimer = useRef<number | null>(null);
 
   useEffect(() => {
     document.title = `${pageTitle(route)} | Vsmart Sync`;
   }, [route]);
 
   useEffect(() => {
-    if (!navigationOpen) {
-      return;
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setNavigationOpen(false);
+    return () => {
+      if (openTimer.current != null) {
+        window.clearTimeout(openTimer.current);
+      }
+      if (closeTimer.current != null) {
+        window.clearTimeout(closeTimer.current);
       }
     };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [navigationOpen]);
+  }, []);
+
+  function clearTimers() {
+    if (openTimer.current != null) {
+      window.clearTimeout(openTimer.current);
+      openTimer.current = null;
+    }
+    if (closeTimer.current != null) {
+      window.clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+  }
+
+  function openNavigation() {
+    clearTimers();
+    openTimer.current = window.setTimeout(() => setNavigationOpen(true), 80);
+  }
+
+  function closeNavigation() {
+    clearTimers();
+    closeTimer.current = window.setTimeout(() => setNavigationOpen(false), 160);
+  }
 
   return (
     <div className="flex h-full min-h-0 bg-background text-foreground">
       <div
         id="primary-navigation"
-        onMouseEnter={() => setNavigationOpen(true)}
-        onMouseLeave={() => setNavigationOpen(false)}
+        onMouseEnter={openNavigation}
+        onMouseLeave={closeNavigation}
         className={cn(
           "h-full shrink-0 overflow-hidden border-r border-white/10 bg-linear-to-b from-[#3355e0] via-[#1f3aa8] to-[#0d1440] shadow-[4px_0_24px_rgba(0,0,0,0.25)] transition-[width] duration-300 ease-in-out motion-reduce:transition-none",
           navigationOpen ? "w-64" : "w-16",
         )}
       >
-        <AppSidebar
-          route={route}
-          expanded={navigationOpen}
-          onNavigate={onNavigate}
-        />
+        <AppSidebar route={route} expanded={navigationOpen} onNavigate={onNavigate} />
       </div>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <AppTopBar

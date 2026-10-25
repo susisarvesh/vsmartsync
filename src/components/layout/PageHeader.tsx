@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 type PageHeaderProps = {
-  title: string;
+  title?: string;
   description: string;
   action?: ReactNode;
   titleClassName?: string;
@@ -18,15 +18,17 @@ export function PageHeader({
   return (
     <div className="mb-5 flex flex-wrap items-start justify-between gap-3 border-b border-border pb-4">
       <div className="min-w-0 max-w-3xl">
-        <h2
-          className={cn(
-            "text-lg font-semibold tracking-tight text-foreground",
-            titleClassName,
-          )}
-        >
-          {title}
-        </h2>
-        <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+        {title ? (
+          <h2
+            className={cn(
+              "text-lg font-semibold tracking-tight text-foreground",
+              titleClassName,
+            )}
+          >
+            {title}
+          </h2>
+        ) : null}
+        <p className={cn("text-sm text-muted-foreground", title && "mt-1")}>{description}</p>
       </div>
       {action ? <div className="shrink-0">{action}</div> : null}
     </div>

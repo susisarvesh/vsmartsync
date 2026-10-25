@@ -8,7 +8,9 @@ use crate::database::repositories::{
     AccessEventRepository, CredentialRepository, DeviceRepository, DeviceUserRepository,
     EnrollmentRepository, EnrollmentSessionRepository, UserDeviceRepository, UserRepository,
 };
-use crate::database::{DatabaseRuntime, DatabaseStatus};
+use crate::database::{
+    accept_privacy, provision, setup_status, DatabaseRuntime, DatabaseStatus, SetupStatus,
+};
 use crate::domains::credentials::{self, Credential, CredentialError, CredentialListFilter};
 use crate::domains::devices::{self, Device, DeviceError, DiscoveredDevice};
 use crate::domains::enrollments::{
@@ -46,6 +48,34 @@ pub async fn connect_database(
     tracing::info!(command = "connect_database", "frontend invoked rust");
     let runtime = DatabaseRuntime::clone(&runtime);
     Ok(runtime.connect().await)
+}
+
+#[tauri::command]
+pub fn get_setup_status() -> SetupStatus {
+    tracing::info!(command = "get_setup_status", "frontend invoked rust");
+    setup_status()
+}
+
+#[tauri::command]
+pub fn accept_database_privacy() -> Result<SetupStatus, String> {
+    tracing::info!(command = "accept_database_privacy", "frontend invoked rust");
+    accept_privacy()
+}
+
+#[tauri::command]
+pub async fn provision_database(
+    runtime: tauri::State<'_, DatabaseRuntime>,
+    engine: String,
+    admin_user: Option<String>,
+    admin_password: Option<String>,
+) -> Result<SetupStatus, String> {
+    tracing::info!(command = "provision_database", engine = %engine, "frontend invoked rust");
+    let runtime = DatabaseRuntime::clone(&runtime);
+    let (status, config) = provision(&engine, admin_user, admin_password).await?;
+    if let Some(config) = config {
+        runtime.adopt(config).await;
+    }
+    Ok(status)
 }
 
 #[tauri::command]

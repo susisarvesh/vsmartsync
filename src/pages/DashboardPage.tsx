@@ -57,11 +57,31 @@ export function DashboardPage({
 
   return (
     <div>
-      <PageHeader
-        title="Workstation Dashboard"
-        description="Operational status for this workstation. Only installed modules are shown."
-        titleClassName="text-2xl font-bold tracking-normal"
-      />
+      <PageHeader description="Operational status for this workstation. Only installed modules are shown." />
+
+      <section className="mb-5 rounded-lg border border-border bg-card p-4">
+        <h3 className="text-sm font-semibold text-foreground">Start here</h3>
+        <ol className="mt-2 grid gap-2 text-sm sm:grid-cols-3">
+          <li className="rounded-md bg-muted px-3 py-2">
+            <span className="font-medium">1. Devices</span>
+            <span className="mt-0.5 block text-xs text-muted-foreground">
+              Add or scan the readers on this site.
+            </span>
+          </li>
+          <li className="rounded-md bg-muted px-3 py-2">
+            <span className="font-medium">2. People</span>
+            <span className="mt-0.5 block text-xs text-muted-foreground">
+              Import the workforce, then search by name or ID.
+            </span>
+          </li>
+          <li className="rounded-md bg-muted px-3 py-2">
+            <span className="font-medium">3. Enrollment</span>
+            <span className="mt-0.5 block text-xs text-muted-foreground">
+              Assign people to a reader and capture a card or face.
+            </span>
+          </li>
+        </ol>
+      </section>
 
       <section className="mb-5">
         <div className="mb-2 flex items-end justify-between gap-2">

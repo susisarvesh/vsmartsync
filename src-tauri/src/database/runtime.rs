@@ -13,6 +13,7 @@ use super::{connect_and_migrate_with_limit, ping, DatabaseConfig, DatabaseError,
 #[serde(rename_all = "camelCase")]
 pub struct DatabaseStatus {
     pub connected: bool,
+    pub engine: String,
     pub host: String,
     pub port: u16,
     pub database: String,
@@ -22,7 +23,7 @@ pub struct DatabaseStatus {
 }
 
 struct DatabaseRuntimeInner {
-    config: Result<DatabaseConfig, String>,
+    config: Mutex<Result<DatabaseConfig, String>>,
     pool: Mutex<Option<DbPool>>,
     pool_size: u32,
 }
@@ -38,7 +39,9 @@ impl DatabaseRuntime {
     }
 
     pub fn with_pool_size(pool_size: u32) -> Self {
-        let config = DatabaseConfig::from_env().map_err(|error| error.to_string());
+        let config = super::setup::stored_postgres_config()
+            .ok_or_else(|| "setup".to_string())
+            .or_else(|_| DatabaseConfig::from_env().map_err(|error| error.to_string()));
         let pool = match &config {
             Ok(config) => match tauri::async_runtime::block_on(connect_and_migrate_with_limit(
                 config, pool_size,
@@ -61,7 +64,7 @@ impl DatabaseRuntime {
 
         Self {
             inner: Arc::new(DatabaseRuntimeInner {
-                config,
+                config: Mutex::new(config),
                 pool: Mutex::new(pool),
                 pool_size,
             }),
@@ -75,13 +78,28 @@ impl DatabaseRuntime {
         self.connect().await
     }
 
+    pub async fn adopt(&self, config: DatabaseConfig) -> DatabaseStatus {
+        if let Ok(mut guard) = self.inner.config.lock() {
+            *guard = Ok(config);
+        }
+        self.connect().await
+    }
+
     pub async fn connect(&self) -> DatabaseStatus {
-        let config = match &self.inner.config {
-            Ok(config) => config,
-            Err(error) => return self.disconnected_status(config_message(error)),
+        let config = match self.inner.config.lock() {
+            Ok(guard) => match guard.as_ref() {
+                Ok(config) => config.clone(),
+                Err(error) => return self.disconnected_status(config_message(error)),
+            },
+            Err(_) => {
+                return self.disconnected_status(
+                    "Database settings could not be loaded. Check .env in the project folder."
+                        .to_string(),
+                );
+            }
         };
 
-        match connect_and_migrate_with_limit(config, self.inner.pool_size).await {
+        match connect_and_migrate_with_limit(&config, self.inner.pool_size).await {
             Ok(pool) => {
                 if let Ok(mut guard) = self.inner.pool.lock() {
                     *guard = Some(pool);
@@ -138,9 +156,9 @@ impl DatabaseRuntime {
         let (host, port, database, user) = self
             .inner
             .config
-            .as_ref()
+            .lock()
             .ok()
-            .and_then(DatabaseConfig::public_target)
+            .and_then(|guard| guard.as_ref().ok().and_then(DatabaseConfig::public_target))
             .map(|target| (target.host, target.port, target.database, target.user))
             .unwrap_or_else(|| {
                 (
@@ -153,6 +171,7 @@ impl DatabaseRuntime {
 
         DatabaseStatus {
             connected: false,
+            engine: "postgres".to_string(),
             host,
             port,
             database,
@@ -193,6 +212,7 @@ mod tests {
     fn status_json_has_no_password_field() {
         let status = DatabaseStatus {
             connected: false,
+            engine: "postgres".into(),
             host: "127.0.0.1".into(),
             port: 5432,
             database: "vsmart_sync".into(),

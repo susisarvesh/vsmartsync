@@ -2,8 +2,10 @@ import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { MoreHorizontal, Plus, Search } from "lucide-react";
+import { MoreHorizontal, Plus } from "lucide-react";
 import { PageHeader, EmptyState, ErrorState } from "@/components/layout/PageHeader";
+import { FilterBar, PageControls, ResultSummary, SearchField } from "@/components/lists/ListControls";
+import { UserPicker } from "@/components/users/UserPicker";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import {
@@ -40,6 +42,7 @@ import {
 } from "@/hooks/useCredentials";
 import { useUsersQuery } from "@/hooks/useUsers";
 import { EnrollmentsPage } from "@/pages/EnrollmentsPage";
+import { usePagedItems } from "@/lib/paging";
 import { formatDateTime } from "@/lib/utils";
 import type {
   Credential,
@@ -93,7 +96,6 @@ export function CredentialsPage({ enabled }: CredentialsPageProps) {
   const { toast } = useToast();
   const usersQuery = useUsersQuery(enabled);
   const [search, setSearch] = useState("");
-  const [userFilter, setUserFilter] = useState<string>("all");
   const [typeFilter, setTypeFilter] = useState<"all" | CredentialType>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | CredentialStatus>(
     "all",
@@ -106,11 +108,10 @@ export function CredentialsPage({ enabled }: CredentialsPageProps) {
 
   const listFilter = useMemo(
     () => ({
-      userId: userFilter === "all" ? undefined : userFilter,
       credentialType: typeFilter === "all" ? undefined : typeFilter,
       status: statusFilter === "all" ? undefined : statusFilter,
     }),
-    [userFilter, typeFilter, statusFilter],
+    [typeFilter, statusFilter],
   );
 
   const credentialsQuery = useCredentialsQuery(enabled, listFilter);
@@ -147,6 +148,7 @@ export function CredentialsPage({ enabled }: CredentialsPageProps) {
       );
     });
   }, [credentialsQuery.data, search]);
+  const credentialPage = usePagedItems(filtered, 50, `${search}|${typeFilter}|${statusFilter}`);
 
   async function onCreate(values: CreateForm) {
     try {
@@ -232,10 +234,7 @@ export function CredentialsPage({ enabled }: CredentialsPageProps) {
   if (!enabled) {
     return (
       <div>
-        <PageHeader
-          title="Credentials"
-          description="Manage user credentials in the local system of record."
-        />
+        <PageHeader description="Manage user credentials in the local system of record." />
         <ErrorState
           title="Database required"
           description="Connect local PostgreSQL from Dashboard before managing credentials."
@@ -247,7 +246,6 @@ export function CredentialsPage({ enabled }: CredentialsPageProps) {
   return (
     <div>
       <PageHeader
-        title="Credentials"
         description="A credential belongs to a user and to the device it was enrolled on. Enrollment stays on this page."
         action={
           <Button type="button" onClick={() => setCreateOpen(true)}>
@@ -257,33 +255,13 @@ export function CredentialsPage({ enabled }: CredentialsPageProps) {
         }
       />
 
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <div className="relative min-w-[12rem] flex-1">
-          <Search
-            className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-            aria-hidden
-          />
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search by user or type…"
-            className="pl-8"
-            aria-label="Search credentials"
-          />
-        </div>
-        <Select value={userFilter} onValueChange={setUserFilter}>
-          <SelectTrigger className="w-44" aria-label="Filter by user">
-            <SelectValue placeholder="User" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All users</SelectItem>
-            {(usersQuery.data ?? []).map((user) => (
-              <SelectItem key={user.id} value={user.id}>
-                {user.username}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      <FilterBar>
+        <SearchField
+          value={search}
+          onChange={setSearch}
+          placeholder="Search by person, type, or card"
+          label="Search credentials"
+        />
         <Select
           value={typeFilter}
           onValueChange={(value: "all" | CredentialType) => setTypeFilter(value)}
@@ -312,6 +290,19 @@ export function CredentialsPage({ enabled }: CredentialsPageProps) {
             <SelectItem value="inactive">Inactive</SelectItem>
           </SelectContent>
         </Select>
+      </FilterBar>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <ResultSummary
+          start={credentialPage.start}
+          count={credentialPage.slice.length}
+          total={credentialPage.total}
+          noun="credentials"
+        />
+        <PageControls
+          page={credentialPage.page}
+          pageCount={credentialPage.pageCount}
+          onPage={credentialPage.setPage}
+        />
       </div>
 
       {credentialsQuery.isLoading ? (
@@ -350,39 +341,39 @@ export function CredentialsPage({ enabled }: CredentialsPageProps) {
       ) : null}
 
       {filtered.length > 0 ? (
-        <div className="overflow-x-auto rounded-lg border border-border bg-card">
-          <table className="w-full border-collapse text-sm">
+        <div className="overflow-hidden rounded-lg border border-border bg-card">
+          <table className="w-full table-fixed border-collapse text-sm">
             <thead className="bg-muted/60 text-left text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
-                <th className="px-3 py-2 font-medium">User</th>
-                <th className="px-3 py-2 font-medium">Type</th>
-                <th className="px-3 py-2 font-medium">Credential</th>
-                <th className="px-3 py-2 font-medium">Status</th>
-                <th className="px-3 py-2 font-medium">Updated</th>
-                <th className="px-3 py-2 font-medium">
+                <th className="w-[24%] px-3 py-2 font-medium">User</th>
+                <th className="w-[14%] px-3 py-2 font-medium">Type</th>
+                <th className="w-[24%] px-3 py-2 font-medium">Credential</th>
+                <th className="w-[14%] px-3 py-2 font-medium">Status</th>
+                <th className="w-[18%] px-3 py-2 font-medium">Updated</th>
+                <th className="w-10 px-3 py-2 font-medium">
                   <span className="sr-only">Actions</span>
                 </th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((credential) => (
+              {credentialPage.slice.map((credential) => (
                 <tr key={credential.id} className="border-t border-border">
-                  <td className="px-3 py-2 font-medium text-foreground">
+                  <td className="max-w-0 truncate px-3 py-2 font-medium text-foreground" title={credential.userName}>
                     {credential.userName}
                   </td>
-                  <td className="px-3 py-2 capitalize text-muted-foreground">
+                  <td className="max-w-0 truncate px-3 py-2 capitalize text-muted-foreground">
                     {credential.credentialType}
                   </td>
-                  <td className="px-3 py-2 font-mono text-xs text-muted-foreground">
+                  <td className="max-w-0 truncate px-3 py-2 font-mono text-xs text-muted-foreground" title={credentialDisplay(credential)}>
                     {credentialDisplay(credential)}
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="whitespace-nowrap px-3 py-2">
                     <StatusBadge status={credential.status} />
                   </td>
-                  <td className="px-3 py-2 text-muted-foreground">
+                  <td className="truncate px-3 py-2 text-muted-foreground">
                     {formatDateTime(credential.updatedAt)}
                   </td>
-                  <td className="px-3 py-2 text-right">
+                  <td className="px-2 py-2 text-right">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button
@@ -443,33 +434,20 @@ export function CredentialsPage({ enabled }: CredentialsPageProps) {
             className="grid gap-3"
             onSubmit={createForm.handleSubmit(onCreate)}
           >
-            <div className="grid gap-1.5">
-              <Label htmlFor="credential-user">User</Label>
-              <Select
-                value={createForm.watch("userId") || undefined}
-                onValueChange={(value) =>
-                  createForm.setValue("userId", value, { shouldValidate: true })
-                }
-              >
-                <SelectTrigger id="credential-user" aria-label="User">
-                  <SelectValue placeholder="Select user" />
-                </SelectTrigger>
-                <SelectContent>
-                  {(usersQuery.data ?? [])
-                    .filter((user) => user.status === "active")
-                    .map((user) => (
-                      <SelectItem key={user.id} value={user.id}>
-                        {user.username}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-              {createForm.formState.errors.userId ? (
-                <p className="text-xs text-destructive">
-                  {createForm.formState.errors.userId.message}
-                </p>
-              ) : null}
-            </div>
+            <UserPicker
+              id="credential-user"
+              users={usersQuery.data ?? []}
+              value={createForm.watch("userId")}
+              disabled={createCredential.isPending}
+              onChange={(value) =>
+                createForm.setValue("userId", value, { shouldValidate: true })
+              }
+            />
+            {createForm.formState.errors.userId ? (
+              <p className="text-xs text-destructive">
+                {createForm.formState.errors.userId.message}
+              </p>
+            ) : null}
             <div className="grid gap-1.5">
               <Label htmlFor="credential-type">Type</Label>
               <Select

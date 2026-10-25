@@ -2,8 +2,10 @@ import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { MoreHorizontal, Plus, Search } from "lucide-react";
+import { MoreHorizontal, Plus } from "lucide-react";
+import { DeviceArtwork } from "@/components/devices/DeviceArtwork";
 import { PageHeader, EmptyState, ErrorState } from "@/components/layout/PageHeader";
+import { FilterBar, PageControls, ResultSummary, SearchField } from "@/components/lists/ListControls";
 import { NetworkScanDialog } from "@/components/NetworkScanDialog";
 import { ConnectionStatusBadge, StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
@@ -35,6 +37,7 @@ import {
   useTestDeviceConnection,
   useUpdateDevice,
 } from "@/hooks/useDevices";
+import { usePagedItems } from "@/lib/paging";
 import { formatDateTime } from "@/lib/utils";
 import type { Device } from "@/types/devices";
 
@@ -109,6 +112,9 @@ export function DevicesPage({ enabled }: DevicesPageProps) {
   const testConnection = useTestDeviceConnection();
 
   const [search, setSearch] = useState("");
+  const [listFilter, setListFilter] = useState<
+    "all" | "online" | "offline" | "active" | "inactive"
+  >("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [viewDevice, setViewDevice] = useState<Device | null>(null);
   const [editDevice, setEditDevice] = useState<Device | null>(null);
@@ -144,22 +150,38 @@ export function DevicesPage({ enabled }: DevicesPageProps) {
     defaultValues: { password: "" },
   });
 
+  const devices = devicesQuery.data ?? [];
   const filtered = useMemo(() => {
-    const devices = devicesQuery.data ?? [];
     const query = search.trim().toLowerCase();
-    if (!query) {
-      return devices;
-    }
     return devices.filter((device) => {
+      if (listFilter === "online" && device.connectionStatus !== "online") {
+        return false;
+      }
+      if (listFilter === "offline" && device.connectionStatus !== "offline") {
+        return false;
+      }
+      if (listFilter === "active" && device.status !== "active") {
+        return false;
+      }
+      if (listFilter === "inactive" && device.status !== "inactive") {
+        return false;
+      }
+      if (!query) {
+        return true;
+      }
       const endpoint = `${device.host}:${device.port}`.toLowerCase();
       return (
         device.deviceName.toLowerCase().includes(query) ||
         endpoint.includes(query) ||
         (device.macAddress ?? "").toLowerCase().includes(query) ||
+        (device.deviceModel ?? "").toLowerCase().includes(query) ||
         device.username.toLowerCase().includes(query)
       );
     });
-  }, [devicesQuery.data, search]);
+  }, [devices, listFilter, search]);
+  const devicePage = usePagedItems(filtered, 24, `${search}|${listFilter}`);
+  const onlineCount = devices.filter((device) => device.connectionStatus === "online").length;
+  const offlineCount = devices.filter((device) => device.connectionStatus === "offline").length;
 
   async function onCreate(values: CreateForm) {
     try {
@@ -295,10 +317,7 @@ export function DevicesPage({ enabled }: DevicesPageProps) {
   if (!enabled) {
     return (
       <div>
-        <PageHeader
-          title="Devices"
-          description="Register Matrix COSEC devices and verify reachability."
-        />
+        <PageHeader description="Register Matrix COSEC devices and verify reachability." />
         <ErrorState
           title="Database required"
           description="Connect local PostgreSQL from Dashboard before managing devices."
@@ -310,7 +329,6 @@ export function DevicesPage({ enabled }: DevicesPageProps) {
   return (
     <div>
       <PageHeader
-        title="Devices"
         description="Register devices with a name, network address, and optional MAC. New devices start Active. Model stays blank until configuration discovery."
         action={
           <div className="flex gap-2">
@@ -329,20 +347,39 @@ export function DevicesPage({ enabled }: DevicesPageProps) {
         }
       />
 
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <div className="relative min-w-[14rem] flex-1">
-          <Search
-            className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-            aria-hidden
-          />
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search devices…"
-            className="pl-8"
-            aria-label="Search devices"
+      {devices.length > 0 ? (
+        <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <CountCard label="Devices" value={devices.length} />
+          <CountCard label="Online" value={onlineCount} />
+          <CountCard label="Offline" value={offlineCount} />
+          <CountCard
+            label="Not checked"
+            value={devices.length - onlineCount - offlineCount}
           />
         </div>
+      ) : null}
+
+      <FilterBar>
+        <SearchField
+          value={search}
+          onChange={setSearch}
+          placeholder="Search name, model, address, or MAC"
+          label="Search devices"
+        />
+        <DeviceFilter value={listFilter} onChange={setListFilter} />
+      </FilterBar>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <ResultSummary
+          start={devicePage.start}
+          count={devicePage.slice.length}
+          total={devicePage.total}
+          noun="devices"
+        />
+        <PageControls
+          page={devicePage.page}
+          pageCount={devicePage.pageCount}
+          onPage={devicePage.setPage}
+        />
       </div>
 
       {devicesQuery.isLoading ? (
@@ -381,62 +418,40 @@ export function DevicesPage({ enabled }: DevicesPageProps) {
       ) : null}
 
       {filtered.length > 0 ? (
-        <div className="overflow-x-auto rounded-lg border border-border bg-card">
-          <table className="w-full min-w-[40rem] border-collapse text-sm">
-            <thead className="bg-muted/60 text-left text-xs uppercase tracking-wide text-muted-foreground">
-              <tr>
-                <th className="whitespace-nowrap px-3 py-2 font-medium">Device</th>
-                <th className="whitespace-nowrap px-3 py-2 font-medium">Host:Port</th>
-                <th className="hidden whitespace-nowrap px-3 py-2 font-medium xl:table-cell">
-                  MAC
-                </th>
-                <th className="hidden whitespace-nowrap px-3 py-2 font-medium xl:table-cell">
-                  Model
-                </th>
-                <th className="whitespace-nowrap px-3 py-2 font-medium">Status</th>
-                <th className="whitespace-nowrap px-3 py-2 font-medium">Connection</th>
-                <th className="hidden whitespace-nowrap px-3 py-2 font-medium lg:table-cell">
-                  Last Seen
-                </th>
-                <th className="whitespace-nowrap px-3 py-2 font-medium">
-                  <span className="sr-only">Actions</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((device) => (
-                <tr key={device.id} className="border-t border-border">
-                  <td className="max-w-[12rem] px-3 py-2 font-medium text-foreground">
-                    <span className="block truncate" title={device.deviceName}>
-                      {device.deviceName}
-                    </span>
-                  </td>
-                  <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {devicePage.slice.map((device) => (
+            <article key={device.id} className="flex flex-col rounded-lg border border-border bg-card">
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 gap-3 p-3 text-left hover:bg-muted/40"
+                onClick={() => setViewDevice(device)}
+              >
+                <DeviceArtwork model={device.deviceModel} className="h-16 w-16 shrink-0" />
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-semibold text-foreground">
+                    {device.deviceName}
+                  </span>
+                  <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                    {device.deviceModel ?? "Model not identified yet"}
+                  </span>
+                  <span className="mt-1 block text-xs text-muted-foreground">
                     {device.host}:{device.port}
-                  </td>
-                  <td className="hidden whitespace-nowrap px-3 py-2 text-muted-foreground xl:table-cell">
-                    {device.macAddress ?? "—"}
-                  </td>
-                  <td className="hidden px-3 py-2 text-muted-foreground xl:table-cell">
-                    {device.deviceModel ?? "Not identified"}
-                  </td>
-                  <td className="whitespace-nowrap px-3 py-2">
+                  </span>
+                  <span className="mt-2 flex flex-wrap items-center gap-1.5">
                     <StatusBadge status={device.status} />
-                  </td>
-                  <td className="whitespace-nowrap px-3 py-2">
                     {testingId === device.id ? (
                       <span className="text-xs text-muted-foreground">Testing…</span>
                     ) : (
                       <ConnectionStatusBadge status={device.connectionStatus} />
                     )}
-                  </td>
-                  <td className="hidden whitespace-nowrap px-3 py-2 text-muted-foreground lg:table-cell">
-                    {device.lastSeenAt
-                      ? formatDateTime(device.lastSeenAt)
-                      : "Never"}
-                  </td>
-                  <td className="whitespace-nowrap px-3 py-2 text-right">
-                    <div className="flex items-center justify-end gap-1">
+                  </span>
+                </span>
+              </button>
+              <div className="flex items-center justify-between gap-2 border-t border-border px-3 py-2">
+                <span className="truncate text-xs text-muted-foreground">
+                  {device.lastSeenAt ? formatDateTime(device.lastSeenAt) : "Never seen"}
+                </span>
+                <div className="flex items-center gap-1">
                       <Button
                         type="button"
                         variant="secondary"
@@ -509,11 +524,9 @@ export function DevicesPage({ enabled }: DevicesPageProps) {
                       </DropdownMenuContent>
                     </DropdownMenu>
                     </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+              </div>
+            </article>
+          ))}
         </div>
       ) : null}
 
@@ -607,6 +620,12 @@ export function DevicesPage({ enabled }: DevicesPageProps) {
               until configuration discovery.
             </DialogDescription>
           </DialogHeader>
+          <div className="flex items-center gap-3">
+            <DeviceArtwork model={viewDevice?.deviceModel} className="h-20 w-20" />
+            <p className="text-xs text-muted-foreground">
+              Picture matches the reader family. A product photo replaces it once that model image is added.
+            </p>
+          </div>
           <dl className="grid gap-2 text-sm">
             <div>
               <dt className="text-muted-foreground">ID</dt>
@@ -789,6 +808,48 @@ export function DevicesPage({ enabled }: DevicesPageProps) {
           </form>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function CountCard({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-lg border border-border bg-card px-3 py-2">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="text-lg font-semibold tabular-nums text-foreground">{value.toLocaleString()}</p>
+    </div>
+  );
+}
+
+function DeviceFilter({
+  value,
+  onChange,
+}: {
+  value: "all" | "online" | "offline" | "active" | "inactive";
+  onChange: (value: "all" | "online" | "offline" | "active" | "inactive") => void;
+}) {
+  const options = [
+    ["all", "All"],
+    ["online", "Online"],
+    ["offline", "Offline"],
+    ["active", "Active"],
+    ["inactive", "Inactive"],
+  ] as const;
+  return (
+    <div className="flex flex-wrap rounded-md border border-border bg-card p-0.5" role="group" aria-label="Device filter">
+      {options.map(([id, label]) => (
+        <button
+          key={id}
+          type="button"
+          aria-pressed={value === id}
+          className={`rounded px-2.5 py-1 text-xs ${
+            value === id ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+          }`}
+          onClick={() => onChange(id)}
+        >
+          {label}
+        </button>
+      ))}
     </div>
   );
 }

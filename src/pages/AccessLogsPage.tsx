@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { EmptyState, ErrorState, PageHeader } from "@/components/layout/PageHeader";
+import { FilterBar, PageControls, ResultSummary, SearchField } from "@/components/lists/ListControls";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
@@ -12,6 +13,7 @@ import {
 import { useToast } from "@/components/ui/toaster";
 import { useDevicesQuery } from "@/hooks/useDevices";
 import { useAccessEvents, useFetchDeviceEvents } from "@/hooks/useEvents";
+import { usePagedItems } from "@/lib/paging";
 
 type AccessLogsPageProps = {
   enabled: boolean;
@@ -21,10 +23,26 @@ export function AccessLogsPage({ enabled }: AccessLogsPageProps) {
   const { toast } = useToast();
   const devicesQuery = useDevicesQuery(enabled);
   const [deviceId, setDeviceId] = useState("");
+  const [search, setSearch] = useState("");
   const eventsQuery = useAccessEvents(enabled, deviceId || null);
   const fetchEvents = useFetchDeviceEvents();
   const activeDevices = (devicesQuery.data ?? []).filter((device) => device.status === "active");
   const rows = eventsQuery.data ?? [];
+  const filtered = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) {
+      return rows;
+    }
+    return rows.filter((event) => {
+      return (
+        (event.personName ?? "").toLowerCase().includes(query) ||
+        event.deviceName.toLowerCase().includes(query) ||
+        (event.details ?? "").toLowerCase().includes(query) ||
+        (event.eventId ?? "").toLowerCase().includes(query)
+      );
+    });
+  }, [rows, search]);
+  const eventPage = usePagedItems(filtered, 50, `${search}|${deviceId}`);
 
   async function onFetch() {
     if (!deviceId) {
@@ -59,7 +77,6 @@ export function AccessLogsPage({ enabled }: AccessLogsPageProps) {
   return (
     <div>
       <PageHeader
-        title="In/Out Report"
         description="Entries the device already allowed or recorded after someone presented a card or face. The time, name, and device are saved here."
         action={
           <Button
@@ -90,6 +107,23 @@ export function AccessLogsPage({ enabled }: AccessLogsPageProps) {
           </SelectContent>
         </Select>
       </div>
+      <FilterBar>
+        <SearchField
+          value={search}
+          onChange={setSearch}
+          placeholder="Search name, device, or event"
+          label="Search access logs"
+        />
+      </FilterBar>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <ResultSummary
+          start={eventPage.start}
+          count={eventPage.slice.length}
+          total={eventPage.total}
+          noun="events"
+        />
+        <PageControls page={eventPage.page} pageCount={eventPage.pageCount} onPage={eventPage.setPage} />
+      </div>
       {eventsQuery.isLoading ? (
         <p className="text-sm text-muted-foreground">Loading access logs…</p>
       ) : null}
@@ -100,13 +134,16 @@ export function AccessLogsPage({ enabled }: AccessLogsPageProps) {
           onRetry={() => void eventsQuery.refetch()}
         />
       ) : null}
+      {!eventsQuery.isLoading && !eventsQuery.isError && rows.length > 0 && filtered.length === 0 ? (
+        <EmptyState title="No matching events" description="Try another name, device, or event." />
+      ) : null}
       {!eventsQuery.isLoading && !eventsQuery.isError && rows.length === 0 ? (
         <EmptyState
           title="No access logs yet"
           description="Logging starts from the device's current event. Choose a device, fetch it, then present a card or face. Earlier history is not imported."
         />
       ) : null}
-      {rows.length > 0 ? (
+      {filtered.length > 0 ? (
         <div className="overflow-x-auto rounded-lg border border-border bg-card">
           <table className="w-full min-w-[40rem] border-collapse text-sm">
             <thead className="bg-muted/60 text-left text-xs uppercase tracking-wide text-muted-foreground">
@@ -119,7 +156,7 @@ export function AccessLogsPage({ enabled }: AccessLogsPageProps) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((event) => (
+              {eventPage.slice.map((event) => (
                 <tr key={event.id} className="border-t border-border">
                   <td className="whitespace-nowrap px-3 py-2 text-foreground">
                     {event.occurredLabel}

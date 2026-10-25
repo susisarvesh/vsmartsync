@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AppShell } from "@/components/layout/AppShell";
+import { SetupWizard } from "@/components/setup/SetupWizard";
 import { ToasterProvider } from "@/components/ui/toaster";
 import { useDatabaseStatus } from "@/hooks/useDatabaseStatus";
+import { getSetupStatus, type SetupStatus } from "@/services/setup";
 import type { AppRoute } from "@/navigation";
 import { AccessLogsPage } from "@/pages/AccessLogsPage";
 import { AssignDevicePage } from "@/pages/AssignDevicePage";
@@ -38,6 +40,35 @@ function AppContent() {
   const database = useDatabaseStatus();
   const inDesktopApp = isDesktopApp();
   const databaseConnected = Boolean(database.status?.connected);
+  const [setup, setSetup] = useState<SetupStatus | null>(null);
+  const [setupLoading, setSetupLoading] = useState(true);
+
+  useEffect(() => {
+    if (!inDesktopApp) {
+      setSetupLoading(false);
+      return;
+    }
+    let cancelled = false;
+    getSetupStatus()
+      .then((next) => {
+        if (!cancelled) {
+          setSetup(next);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSetup(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setSetupLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [inDesktopApp]);
 
   if (!inDesktopApp) {
     return (
@@ -48,6 +79,22 @@ function AppContent() {
           <code>npm install && npm start</code> from the project folder, then
           use the Vsmart Sync window.
         </p>
+      </div>
+    );
+  }
+
+  if (setupLoading || (setup && !setup.ready)) {
+    return setup ? (
+      <SetupWizard
+        initial={setup}
+        onReady={() => {
+          setSetup({ ...setup, ready: true, privacyAccepted: true });
+          void database.retry();
+        }}
+      />
+    ) : (
+      <div className="flex h-full items-center justify-center text-sm text-slate-600">
+        Opening setup…
       </div>
     );
   }

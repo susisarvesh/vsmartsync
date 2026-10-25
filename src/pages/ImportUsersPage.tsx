@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { EmptyState, ErrorState, PageHeader } from "@/components/layout/PageHeader";
+import { PageControls, ResultSummary } from "@/components/lists/ListControls";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toaster";
 import { asErrorMessage, useImportUsers } from "@/hooks/useUsers";
+import { usePagedItems } from "@/lib/paging";
 import type { ImportRowError } from "@/types/users";
 
 type ImportUsersPageProps = {
@@ -14,6 +16,7 @@ export function ImportUsersPage({ enabled }: ImportUsersPageProps) {
   const { toast } = useToast();
   const [fileName, setFileName] = useState("");
   const [errors, setErrors] = useState<ImportRowError[]>([]);
+  const errorPage = usePagedItems(errors, 25, String(errors.length));
 
   async function onFile(file: File | undefined) {
     if (!file) {
@@ -59,10 +62,7 @@ export function ImportUsersPage({ enabled }: ImportUsersPageProps) {
   if (!enabled) {
     return (
       <div>
-        <PageHeader
-          title="Import User"
-          description="Add people from an Excel list. ID, Name, Short Name, and Reference ID are required."
-        />
+        <PageHeader description="Add people from an Excel list. ID, Name, Short Name, and Reference ID are required." />
         <ErrorState
           title="Database required"
           description="Connect local PostgreSQL from Dashboard before importing users."
@@ -74,7 +74,6 @@ export function ImportUsersPage({ enabled }: ImportUsersPageProps) {
   return (
     <div>
       <PageHeader
-        title="Import User"
         description="Choose the Excel list. ID, Name, Short Name, and Reference ID are required on every row. Full Name and Active are saved when the sheet includes them. A blank Active cell means the person is active."
         action={
           <Button type="button" disabled={importUsers.isPending} asChild>
@@ -103,14 +102,29 @@ export function ImportUsersPage({ enabled }: ImportUsersPageProps) {
         />
       )}
       {errors.length > 0 ? (
-        <ul className="rounded-lg border border-border bg-card text-sm">
-          {errors.map((error) => (
-            <li key={`${error.row}-${error.message}`} className="border-b border-border px-3 py-2 last:border-b-0">
-              <span className="font-medium text-foreground">Row {error.row}.</span>{" "}
-              <span className="text-muted-foreground">{error.message}</span>
-            </li>
-          ))}
-        </ul>
+        <div>
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <ResultSummary
+              start={errorPage.start}
+              count={errorPage.slice.length}
+              total={errorPage.total}
+              noun="row problems"
+            />
+            <PageControls
+              page={errorPage.page}
+              pageCount={errorPage.pageCount}
+              onPage={errorPage.setPage}
+            />
+          </div>
+          <ul className="rounded-lg border border-border bg-card text-sm">
+            {errorPage.slice.map((error) => (
+              <li key={`${error.row}-${error.message}`} className="border-b border-border px-3 py-2 last:border-b-0">
+                <span className="font-medium text-foreground">Row {error.row}.</span>{" "}
+                <span className="text-muted-foreground">{error.message}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : null}
     </div>
   );

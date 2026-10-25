@@ -6,6 +6,7 @@
 
 mod config;
 mod pool;
+mod setup;
 #[cfg(test)]
 mod reader_burst;
 mod runtime;
@@ -17,6 +18,7 @@ pub use pool::{
     DatabaseError, DbPool,
 };
 pub use runtime::{DatabaseRuntime, DatabaseStatus};
+pub use setup::{accept_privacy, provision, status as setup_status, SetupStatus};
 pub use test_isolation::{
     assess_test_target, run_isolated_test, writable_test_config, IsolatedDatabase,
     TestDatabaseError,

@@ -19,7 +19,7 @@ export function AppTopBar({
   onRetryDatabase,
 }: AppTopBarProps) {
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-slate-300 bg-white px-4 md:px-6">
+    <header className="flex h-16 shrink-0 items-center justify-between gap-3 border-b border-slate-300 bg-white px-4 md:px-6">
       <h1 className="min-w-0 flex-1 truncate text-base font-semibold leading-none text-slate-900 sm:text-lg">
         {title}
       </h1>

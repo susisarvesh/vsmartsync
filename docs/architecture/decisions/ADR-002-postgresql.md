@@ -1,7 +1,9 @@
 # ADR-002: Local PostgreSQL
 
-- **Status:** Accepted
+- **Status:** Accepted, narrowed by [ADR-015](ADR-015-chosen-database-engine.md)
 - **Date:** 2026-09-20
+
+ADR-015 allows first-run choice of one local engine: PostgreSQL, MySQL, or SQL Server. PostgreSQL remains the engine the application queries use. The rules below still apply to that engine.
 
 ## Context
 

@@ -42,6 +42,8 @@ After a successful start you should see the foundation screen calling Rust `get_
 
 `.env` uses `postgres://<username>:<password>@127.0.0.1:5432/<database>`. Defaults in `.env.example` are user/database `vsmart_sync` on port **5432**.
 
+The installed application opens a setup window first: a privacy notice, then a choice of PostgreSQL, MySQL, or SQL Server. If that server is already running locally, the app creates the `vsmart_sync` database and its tables. Daily use of the screens still requires PostgreSQL until the MySQL and SQL Server statements are in place. An administrator password, when needed, is used once and is not stored.
+
 ## Verify / build
 
 ```bash

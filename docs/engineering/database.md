@@ -4,9 +4,10 @@ Planned **entities** (not frozen columns) are in [docs/database.md](../database.
 
 ## Engine
 
-- PostgreSQL 16+ **local**, port **5432**, not Docker.
+- One local engine per workstation, chosen at first run: PostgreSQL 16+ on port **5432**, MySQL on port **3306**, or SQL Server on port **1433**. Not Docker. Not three databases at once. See ADR-015.
 - Access: SQLx in `src-tauri/src/database/` only.
-- Migrations: versioned SQL in repository-root `migrations/`. The app runs `connect_and_migrate` at startup.
+- PostgreSQL migrations: versioned SQL in repository-root `migrations/`. The app runs `connect_and_migrate` at startup.
+- MySQL and SQL Server use the consolidated schema in `src-tauri/src/database/schema/`. Application queries are still PostgreSQL SQL until a repository is translated.
 - Default `cargo test` must not require a live server. Live checks are `cargo test --manifest-path src-tauri/Cargo.toml -- --ignored`.
 
 ## Invariants belong in the database

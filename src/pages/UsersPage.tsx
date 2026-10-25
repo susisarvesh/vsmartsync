@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { UserRound } from "lucide-react";
 import { EmptyState, ErrorState } from "@/components/layout/PageHeader";
+import { FilterBar, PageControls, ResultSummary, SearchField } from "@/components/lists/ListControls";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toaster";
 import { asErrorMessage, useDeleteUser, useRegisterUser, useUsersQuery } from "@/hooks/useUsers";
-import type { User } from "@/types/users";
+import { usePagedItems } from "@/lib/paging";
+import type { User, UserStatus } from "@/types/users";
 
 type UsersPageProps = {
   enabled: boolean;
@@ -19,6 +21,7 @@ export function UsersPage({ enabled, onEnroll }: UsersPageProps) {
   const registerUser = useRegisterUser();
   const { toast } = useToast();
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | UserStatus>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [registering, setRegistering] = useState(false);
 
@@ -26,16 +29,21 @@ export function UsersPage({ enabled, onEnroll }: UsersPageProps) {
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
     return users.filter((user) => {
+      if (statusFilter !== "all" && user.status !== statusFilter) {
+        return false;
+      }
       if (!query) {
         return true;
       }
       return (
         user.username.toLowerCase().includes(query) ||
+        (user.fullName ?? "").toLowerCase().includes(query) ||
+        (user.shortName ?? "").toLowerCase().includes(query) ||
         (user.matrixUserId ?? "").toLowerCase().includes(query) ||
         String(user.referenceId ?? "").includes(query)
       );
     });
-  }, [search, users]);
+  }, [search, statusFilter, users]);
 
   useEffect(() => {
     if (filtered.length === 0) {
@@ -97,8 +105,7 @@ export function UsersPage({ enabled, onEnroll }: UsersPageProps) {
   if (!enabled) {
     return (
       <div>
-        <h2 className="text-lg font-semibold tracking-tight text-foreground">User Configuration</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Identity and status for each person.</p>
+        <p className="text-sm text-muted-foreground">Identity and status for each person.</p>
         <div className="mt-4">
           <ErrorState
             title="Database required"
@@ -113,8 +120,7 @@ export function UsersPage({ enabled, onEnroll }: UsersPageProps) {
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-background pb-3">
         <div className="min-w-0">
-          <h2 className="text-lg font-semibold tracking-tight text-foreground">User Configuration</h2>
-          <p className="mt-0.5 truncate text-sm text-muted-foreground">
+          <p className="truncate text-sm text-muted-foreground">
             Register one person here, or add a list from Import User.
           </p>
         </div>
@@ -162,6 +168,8 @@ export function UsersPage({ enabled, onEnroll }: UsersPageProps) {
           <UserList
             search={search}
             onSearch={setSearch}
+            statusFilter={statusFilter}
+            onStatusFilter={setStatusFilter}
             loading={usersQuery.isLoading}
             error={usersQuery.isError ? asErrorMessage(usersQuery.error) : null}
             onRetry={() => void usersQuery.refetch()}
@@ -308,6 +316,8 @@ function FormRow({
 function UserList({
   search,
   onSearch,
+  statusFilter,
+  onStatusFilter,
   loading,
   error,
   onRetry,
@@ -320,6 +330,8 @@ function UserList({
 }: {
   search: string;
   onSearch: (value: string) => void;
+  statusFilter: "all" | UserStatus;
+  onStatusFilter: (value: "all" | UserStatus) => void;
   loading: boolean;
   error: string | null;
   onRetry: () => void;
@@ -330,15 +342,26 @@ function UserList({
   removing: boolean;
   onDelete: (user: User) => void;
 }) {
+  const page = usePagedItems(filtered, 50, `${search}|${statusFilter}`);
   return (
     <>
-      <div className="mb-4 max-w-sm">
-        <Input
+      <FilterBar>
+        <SearchField
           value={search}
-          onChange={(event) => onSearch(event.target.value)}
-          placeholder="Search name, ID, or reference"
-          aria-label="Search users"
+          onChange={onSearch}
+          placeholder="Search name, full name, ID, or reference"
+          label="Search users"
         />
+        <StatusChoice value={statusFilter} onChange={onStatusFilter} />
+      </FilterBar>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <ResultSummary
+          start={page.start}
+          count={page.slice.length}
+          total={page.total}
+          noun="people"
+        />
+        <PageControls page={page.page} pageCount={page.pageCount} onPage={page.setPage} />
       </div>
       {loading ? <p className="text-sm text-muted-foreground">Loading users…</p> : null}
       {error ? (
@@ -350,30 +373,61 @@ function UserList({
           description="Use Register User at the top of this page, or import an Excel list."
         />
       ) : null}
+      {!loading && !error && users.length > 0 && filtered.length === 0 ? (
+        <EmptyState
+          title="No matching people"
+          description="Try another name, ID, or reference, or clear the status filter."
+        />
+      ) : null}
       {filtered.length > 0 ? (
-        <div className="grid gap-4 lg:grid-cols-[16rem_minmax(0,1fr)]">
-          <ul className="overflow-hidden rounded-lg border border-border bg-card">
-            {filtered.map((user) => {
-              const active = user.id === selected?.id;
-              return (
-                <li key={user.id} className="border-b border-border last:border-b-0">
-                  <button
-                    type="button"
-                    className={`flex w-full flex-col px-3 py-2 text-left text-sm ${
-                      active ? "bg-accent" : "hover:bg-muted"
-                    }`}
-                    aria-current={active ? "true" : undefined}
-                    onClick={() => onSelect(user.id)}
-                  >
-                    <span className="font-medium text-foreground">{user.username}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {user.matrixUserId ?? "No ID"}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
+          <div className="overflow-x-auto rounded-lg border border-border bg-card">
+            <table className="w-full min-w-[36rem] border-collapse text-sm">
+              <thead className="bg-muted/60 text-left text-xs uppercase tracking-wide text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2 font-medium">Name</th>
+                  <th className="px-3 py-2 font-medium">ID</th>
+                  <th className="px-3 py-2 font-medium">Reference</th>
+                  <th className="px-3 py-2 font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {page.slice.map((user) => {
+                  const active = user.id === selected?.id;
+                  return (
+                    <tr
+                      key={user.id}
+                      className={`cursor-pointer border-t border-border ${active ? "bg-accent" : "hover:bg-muted"}`}
+                      onClick={() => onSelect(user.id)}
+                    >
+                      <td className="px-3 py-2">
+                        <button
+                          type="button"
+                          className="text-left"
+                          aria-current={active ? "true" : undefined}
+                          onClick={() => onSelect(user.id)}
+                        >
+                          <span className="block font-medium text-foreground">{user.username}</span>
+                          <span className="block text-xs text-muted-foreground">
+                            {user.fullName ?? "Full name not reported"}
+                          </span>
+                        </button>
+                      </td>
+                      <td className="px-3 py-2 text-muted-foreground">
+                        {user.matrixUserId ?? "Not imported"}
+                      </td>
+                      <td className="px-3 py-2 text-muted-foreground">
+                        {user.referenceId == null ? "—" : String(user.referenceId)}
+                      </td>
+                      <td className="px-3 py-2">
+                        <StatusBadge status={user.status} />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
           {selected ? (
             <section className="rounded-lg border border-border bg-card">
               <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
@@ -411,6 +465,37 @@ function UserList({
         </div>
       ) : null}
     </>
+  );
+}
+
+function StatusChoice({
+  value,
+  onChange,
+}: {
+  value: "all" | UserStatus;
+  onChange: (value: "all" | UserStatus) => void;
+}) {
+  const options: Array<{ id: "all" | UserStatus; label: string }> = [
+    { id: "all", label: "All" },
+    { id: "active", label: "Active" },
+    { id: "inactive", label: "Inactive" },
+  ];
+  return (
+    <div className="flex rounded-md border border-border bg-card p-0.5" role="group" aria-label="Status">
+      {options.map((option) => (
+        <button
+          key={option.id}
+          type="button"
+          aria-pressed={value === option.id}
+          className={`rounded px-2.5 py-1 text-xs ${
+            value === option.id ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+          }`}
+          onClick={() => onChange(option.id)}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
   );
 }
 
