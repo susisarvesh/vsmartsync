@@ -64,6 +64,9 @@ export function PostgresSetupDetails({ status }: PostgresSetupDetailsProps) {
         After PostgreSQL is running, <code>npm start</code> creates the{" "}
         <code>{status.database}</code> role and database when <code>psql</code>{" "}
         is available.
+        {status.platform === "linux"
+          ? " On Linux, run that command in a terminal. The postgres system account creates the database, and your password may be requested once."
+          : ""}
       </p>
 
       <details className="mt-3">

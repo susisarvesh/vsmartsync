@@ -35,24 +35,32 @@ export function AppSidebar({ route, expanded, onNavigate }: AppSidebarProps) {
   const usersExpanded = expanded && (usersOpen || usersActive);
 
   return (
-    <aside className="flex h-full w-60 flex-col bg-card">
-      <div className="flex h-14 items-center gap-2 border-b border-border px-3">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-xs font-semibold text-primary-foreground">
-          V
-        </span>
-        <div
-          className={cn(
-            "min-w-0 transition-opacity duration-150",
-            expanded ? "opacity-100" : "pointer-events-none opacity-0",
-          )}
+    <aside className="flex h-full w-full flex-col">
+      <div className="shrink-0 overflow-hidden border-b border-slate-200 bg-white">
+        <button
+          type="button"
+          onClick={() => onNavigate("dashboard")}
+          className="flex h-16 w-full items-center justify-center px-2"
+          aria-label="Go to Dashboard"
         >
-          <p className="truncate text-sm font-semibold tracking-tight text-foreground">
-            Vsmart Sync
-          </p>
-          <p className="truncate text-xs leading-snug text-muted-foreground">
-            Local access-control workstation
-          </p>
-        </div>
+          {expanded ? (
+            <img
+              src="/vsmart-logo-full.png"
+              alt="Vsmart Technologies"
+              className="h-[3.25rem] w-auto max-w-[13.5rem] object-contain"
+              width={216}
+              height={52}
+            />
+          ) : (
+            <img
+              src="/favicon.png"
+              alt=""
+              className="h-9 w-9 object-contain"
+              width={36}
+              height={36}
+            />
+          )}
+        </button>
       </div>
       <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto p-2" aria-label="Primary">
         <NavButton
@@ -66,10 +74,11 @@ export function AppSidebar({ route, expanded, onNavigate }: AppSidebarProps) {
           <button
             type="button"
             className={cn(
-              "flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm transition-colors",
+              "flex w-full items-center rounded-lg py-2.5 text-left text-sm transition-colors",
+              expanded ? "gap-3 px-3" : "justify-center px-0",
               usersActive
-                ? "font-medium text-foreground"
-                : "text-foreground hover:bg-muted",
+                ? "bg-blue-500 font-medium text-white shadow-md"
+                : "text-slate-200 hover:bg-white/10 hover:text-white",
             )}
             aria-expanded={usersExpanded}
             aria-label="Users"
@@ -80,7 +89,7 @@ export function AppSidebar({ route, expanded, onNavigate }: AppSidebarProps) {
               }
             }}
           >
-            <Users className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+            <Users className="h-5 w-5 shrink-0" aria-hidden />
             <span
               className={cn(
                 "flex-1 truncate",
@@ -91,15 +100,15 @@ export function AppSidebar({ route, expanded, onNavigate }: AppSidebarProps) {
             </span>
             <ChevronDown
               className={cn(
-                "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
-                usersExpanded ? "rotate-0" : "-rotate-90",
+                "h-4 w-4 shrink-0 transition-transform",
+                usersExpanded ? "rotate-180" : "rotate-0",
                 expanded ? "opacity-100" : "pointer-events-none w-0 opacity-0",
               )}
               aria-hidden
             />
           </button>
           {usersExpanded ? (
-            <div className="ml-4 flex flex-col gap-0.5 border-l border-border pl-2">
+            <div className="my-1 ml-2 flex flex-col gap-0.5 border-l border-white/15 pl-2">
               {USER_NAV.map((item) => (
                 <NavButton
                   key={item.id}
@@ -107,6 +116,7 @@ export function AppSidebar({ route, expanded, onNavigate }: AppSidebarProps) {
                   icon={ICONS[item.id]}
                   active={route === item.id}
                   expanded={expanded}
+                  nested
                   onClick={() => onNavigate(item.id)}
                 />
               ))}
@@ -124,16 +134,6 @@ export function AppSidebar({ route, expanded, onNavigate }: AppSidebarProps) {
           />
         ))}
       </nav>
-      <div className="border-t border-border px-3 py-2.5">
-        <p
-          className={cn(
-            "text-[11px] text-muted-foreground",
-            expanded ? "opacity-100" : "pointer-events-none opacity-0",
-          )}
-        >
-          Installed modules only. Sync appears here when available.
-        </p>
-      </div>
     </aside>
   );
 }
@@ -143,12 +143,14 @@ function NavButton({
   icon: Icon,
   active,
   expanded,
+  nested = false,
   onClick,
 }: {
   label: string;
   icon: typeof LayoutDashboard;
   active: boolean;
   expanded: boolean;
+  nested?: boolean;
   onClick: () => void;
 }) {
   return (
@@ -156,19 +158,23 @@ function NavButton({
       type="button"
       onClick={onClick}
       className={cn(
-        "relative flex items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm transition-colors",
-        active ? "bg-accent font-medium text-accent-foreground" : "text-foreground hover:bg-muted",
+        "flex w-full items-center rounded-lg text-left text-sm transition-colors",
+        nested ? "gap-3 px-3 py-2" : expanded ? "mb-0.5 gap-3 px-3 py-2.5" : "mb-0.5 justify-center px-0 py-2.5",
+        active
+          ? nested
+            ? "bg-blue-400 font-medium text-white shadow-sm"
+            : "bg-blue-500 font-medium text-white shadow-md"
+          : "text-slate-200 hover:bg-white/10 hover:text-white",
       )}
       aria-label={label}
       aria-current={active ? "page" : undefined}
+      title={expanded ? undefined : label}
     >
-      {active ? (
-        <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-primary" aria-hidden />
-      ) : null}
-      <Icon
-        className={cn("h-4 w-4 shrink-0", active ? "text-primary" : "text-muted-foreground")}
-        aria-hidden
-      />
+      {nested ? (
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" aria-hidden />
+      ) : (
+        <Icon className="h-5 w-5 shrink-0" aria-hidden />
+      )}
       <span className={cn("truncate", expanded ? "opacity-100" : "w-0 opacity-0")}>{label}</span>
     </button>
   );

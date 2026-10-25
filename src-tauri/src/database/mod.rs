@@ -6,6 +6,8 @@
 
 mod config;
 mod pool;
+#[cfg(test)]
+mod reader_burst;
 mod runtime;
 mod test_isolation;
 

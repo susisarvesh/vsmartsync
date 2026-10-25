@@ -1,8 +1,10 @@
 //! Find Matrix devices on the workstation's own IPv4 subnets.
 //!
-//! The scan stays on private addresses of local interfaces, and never wider
-//! than a /24. Identification is the documented `device-basic-config` read.
-//! No password is sent during the scan.
+//! macOS and Linux read interfaces with `getifaddrs`. Windows reads the IPv4
+//! address table (`GetIpAddrTable`) and applies the same private-address
+//! rules. The scan stays on local interfaces and never wider than a /24.
+//! Identification is the documented `device-basic-config` read. No password
+//! is sent during the scan.
 
 use std::collections::BTreeSet;
 use std::net::Ipv4Addr;
@@ -96,9 +98,98 @@ fn local_ipv4_interfaces() -> Vec<(Ipv4Addr, Ipv4Addr)> {
     unsafe { interface_addresses() }
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn local_ipv4_interfaces() -> Vec<(Ipv4Addr, Ipv4Addr)> {
+    windows_ip_addr_table()
+        .map(|table| interfaces_from_ip_addr_table(&table))
+        .unwrap_or_default()
+}
+
+#[cfg(not(any(unix, windows)))]
 fn local_ipv4_interfaces() -> Vec<(Ipv4Addr, Ipv4Addr)> {
     Vec::new()
+}
+
+/// `MIB_IPADDRROW` is 24 bytes. Address and mask are network-order bytes.
+#[cfg(any(windows, test))]
+const IP_ADDR_ROW_LEN: usize = 24;
+#[cfg(any(windows, test))]
+const IP_ADDR_DISCONNECTED: u16 = 0x0008;
+#[cfg(any(windows, test))]
+const IP_ADDR_DELETED: u16 = 0x0040;
+
+/// Parse a `MIB_IPADDRTABLE` buffer. Loopback, empty, and down rows are omitted.
+#[cfg(any(windows, test))]
+fn interfaces_from_ip_addr_table(buffer: &[u8]) -> Vec<(Ipv4Addr, Ipv4Addr)> {
+    let Some(count_bytes) = buffer.get(..4) else {
+        return Vec::new();
+    };
+    let Ok(count_bytes) = count_bytes.try_into() else {
+        return Vec::new();
+    };
+    let count = u32::from_ne_bytes(count_bytes) as usize;
+    let mut found = Vec::new();
+    for index in 0..count.min(128) {
+        let start = 4 + index * IP_ADDR_ROW_LEN;
+        let Some(row) = buffer.get(start..start + IP_ADDR_ROW_LEN) else {
+            break;
+        };
+        let Some(kind) = row.get(22..24).and_then(|bytes| bytes.try_into().ok()) else {
+            break;
+        };
+        let kind = u16::from_ne_bytes(kind);
+        if kind & IP_ADDR_DISCONNECTED != 0 || kind & IP_ADDR_DELETED != 0 {
+            continue;
+        }
+        let Some(address) = row.get(..4).and_then(ipv4_from_memory) else {
+            break;
+        };
+        let Some(netmask) = row.get(8..12).and_then(ipv4_from_memory) else {
+            break;
+        };
+        if address.is_loopback() || address.is_unspecified() || netmask.is_unspecified() {
+            continue;
+        }
+        found.push((address, netmask));
+    }
+    found
+}
+
+#[cfg(any(windows, test))]
+fn ipv4_from_memory(bytes: &[u8]) -> Option<Ipv4Addr> {
+    let octets: [u8; 4] = bytes.try_into().ok()?;
+    Some(Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]))
+}
+
+#[cfg(windows)]
+fn windows_ip_addr_table() -> Option<Vec<u8>> {
+    use std::ptr;
+
+    #[link(name = "iphlpapi")]
+    extern "system" {
+        fn GetIpAddrTable(table: *mut u8, size: *mut u32, order: i32) -> u32;
+    }
+
+    const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
+    const NO_ERROR: u32 = 0;
+
+    unsafe {
+        let mut size = 0u32;
+        // Size query: a null table is the documented way to learn the buffer length.
+        if GetIpAddrTable(ptr::null_mut(), &mut size, 0) != ERROR_INSUFFICIENT_BUFFER {
+            return None;
+        }
+        if size < 4 || size > 65_536 {
+            return None;
+        }
+        let mut buffer = vec![0u8; size as usize];
+        let status = GetIpAddrTable(buffer.as_mut_ptr(), &mut size, 0);
+        if status != NO_ERROR || size as usize > buffer.len() {
+            return None;
+        }
+        buffer.truncate(size as usize);
+        Some(buffer)
+    }
 }
 
 #[cfg(unix)]
@@ -167,8 +258,20 @@ unsafe fn read_ipv4(sockaddr: *mut std::os::raw::c_void) -> Option<Ipv4Addr> {
 
 #[cfg(test)]
 mod tests {
-    use super::{hosts_to_probe, is_private_ipv4};
+    use super::{hosts_to_probe, interfaces_from_ip_addr_table, is_private_ipv4, IP_ADDR_ROW_LEN};
     use std::net::Ipv4Addr;
+
+    fn ip_addr_table(rows: &[([u8; 4], [u8; 4], u16)]) -> Vec<u8> {
+        let mut buffer = vec![0u8; 4 + rows.len() * IP_ADDR_ROW_LEN];
+        buffer[..4].copy_from_slice(&(rows.len() as u32).to_ne_bytes());
+        for (index, (address, mask, kind)) in rows.iter().enumerate() {
+            let start = 4 + index * IP_ADDR_ROW_LEN;
+            buffer[start..start + 4].copy_from_slice(address);
+            buffer[start + 8..start + 12].copy_from_slice(mask);
+            buffer[start + 22..start + 24].copy_from_slice(&kind.to_ne_bytes());
+        }
+        buffer
+    }
 
     #[test]
     fn private_ranges_are_the_only_scan_targets() {
@@ -207,5 +310,26 @@ mod tests {
             Ipv4Addr::new(255, 255, 255, 0)
         )
         .is_empty());
+    }
+
+    #[test]
+    fn windows_address_table_keeps_the_lan_and_skips_loopback_and_down_rows() {
+        let table = ip_addr_table(&[
+            ([127, 0, 0, 1], [255, 0, 0, 0], 0x0001),
+            ([192, 168, 1, 20], [255, 255, 255, 0], 0x0001),
+            ([10, 0, 0, 8], [255, 255, 255, 0], 0x0008),
+        ]);
+        assert_eq!(
+            interfaces_from_ip_addr_table(&table),
+            vec![(
+                Ipv4Addr::new(192, 168, 1, 20),
+                Ipv4Addr::new(255, 255, 255, 0)
+            )]
+        );
+    }
+
+    #[test]
+    fn a_truncated_address_table_returns_nothing() {
+        assert!(interfaces_from_ip_addr_table(&[1, 0, 0]).is_empty());
     }
 }

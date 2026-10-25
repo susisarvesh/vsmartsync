@@ -6,6 +6,7 @@
 
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, readFileSync } from "node:fs";
+import { platform } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -44,15 +45,12 @@ if (!ident.test(db) || !ident.test(user)) {
   process.exit(1);
 }
 
-const psql = spawnSync(
-  "psql",
-  ["-d", "postgres", "-v", "ON_ERROR_STOP=1", "-tAc", "SELECT 1"],
-  { encoding: "utf8" },
-);
+const psql = runPsql(["-d", "postgres", "-v", "ON_ERROR_STOP=1", "-tAc", "SELECT 1"]);
 
-if (psql.error || psql.status !== 0) {
+if (!psqlOk(psql)) {
   console.log(
-    "PostgreSQL: start a local server on 127.0.0.1:5432 (no Docker). psql was not usable yet.",
+    "PostgreSQL: start a local server on 127.0.0.1:5432 (no Docker). psql was not usable yet." +
+      linuxPeerHint(),
   );
   process.exit(0);
 }
@@ -68,27 +66,59 @@ END
 $$;
 `;
 
-const role = spawnSync("psql", ["-d", "postgres", "-v", "ON_ERROR_STOP=1", "-c", ensureRole], {
-  encoding: "utf8",
-});
+const role = runPsql(["-d", "postgres", "-v", "ON_ERROR_STOP=1", "-c", ensureRole]);
 if (role.status !== 0) {
   console.log("PostgreSQL role was not created automatically. Check local server access.");
   process.exit(0);
 }
 
-const exists = spawnSync(
-  "psql",
-  ["-d", "postgres", "-tAc", `SELECT 1 FROM pg_database WHERE datname = '${db}'`],
-  { encoding: "utf8" },
-);
+const exists = runPsql([
+  "-d",
+  "postgres",
+  "-tAc",
+  `SELECT 1 FROM pg_database WHERE datname = '${db}'`,
+]);
 
-if (exists.stdout.trim() !== "1") {
-  const createdb = spawnSync(
-    "psql",
-    ["-d", "postgres", "-v", "ON_ERROR_STOP=1", "-c", `CREATE DATABASE ${db} OWNER ${user}`],
-    { encoding: "utf8" },
-  );
+if ((exists.stdout ?? "").trim() !== "1") {
+  const createdb = runPsql([
+    "-d",
+    "postgres",
+    "-v",
+    "ON_ERROR_STOP=1",
+    "-c",
+    `CREATE DATABASE ${db} OWNER ${user}`,
+  ]);
   if (createdb.status !== 0) {
-    console.log("PostgreSQL database was not created automatically.");
+    console.log("PostgreSQL database was not created automatically." + linuxPeerHint());
   }
+}
+
+function psqlOk(result) {
+  return !result.error && result.status === 0;
+}
+
+// macOS Homebrew and a normal Windows install answer `psql` as the current user.
+// Debian and Ubuntu use peer auth, so only the `postgres` system account can
+// create the role. A terminal may show one sudo password prompt. A window
+// with no terminal uses `sudo -n` and does not wait.
+function runPsql(args) {
+  const direct = spawnSync("psql", args, { encoding: "utf8" });
+  if (psqlOk(direct) || platform() !== "linux") {
+    return direct;
+  }
+  const sudoArgs = process.stdin.isTTY
+    ? ["-u", "postgres", "psql", ...args]
+    : ["-n", "-u", "postgres", "psql", ...args];
+  const viaPostgres = spawnSync("sudo", sudoArgs, {
+    encoding: "utf8",
+    stdio: ["inherit", "pipe", "inherit"],
+  });
+  return psqlOk(viaPostgres) ? viaPostgres : direct;
+}
+
+function linuxPeerHint() {
+  if (platform() !== "linux") {
+    return "";
+  }
+  return " On Linux, run npm start in a terminal so the postgres system account can create the database. Your password may be requested once.";
 }

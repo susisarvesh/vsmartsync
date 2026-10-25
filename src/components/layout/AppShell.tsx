@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { AppSidebar } from "@/components/layout/AppSidebar";
 import { AppTopBar } from "@/components/layout/AppTopBar";
 import type { DatabaseStatus } from "@/types/database";
-import type { AppRoute } from "@/navigation";
+import { pageTitle, type AppRoute } from "@/navigation";
 import { cn } from "@/lib/utils";
 
 type AppShellProps = {
@@ -29,6 +29,10 @@ export function AppShell({
   const [navigationOpen, setNavigationOpen] = useState(false);
 
   useEffect(() => {
+    document.title = `${pageTitle(route)} | Vsmart Sync`;
+  }, [route]);
+
+  useEffect(() => {
     if (!navigationOpen) {
       return;
     }
@@ -48,8 +52,8 @@ export function AppShell({
         onMouseEnter={() => setNavigationOpen(true)}
         onMouseLeave={() => setNavigationOpen(false)}
         className={cn(
-          "h-full shrink-0 overflow-hidden border-r border-border bg-card transition-[width] duration-200 ease-out motion-reduce:transition-none",
-          navigationOpen ? "w-60" : "w-16",
+          "h-full shrink-0 overflow-hidden border-r border-white/10 bg-linear-to-b from-[#3355e0] via-[#1f3aa8] to-[#0d1440] shadow-[4px_0_24px_rgba(0,0,0,0.25)] transition-[width] duration-300 ease-in-out motion-reduce:transition-none",
+          navigationOpen ? "w-64" : "w-16",
         )}
       >
         <AppSidebar
@@ -60,14 +64,12 @@ export function AppShell({
       </div>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <AppTopBar
+          title={pageTitle(route)}
           database={database}
           databaseLoading={databaseLoading}
           databaseError={databaseError}
           retrying={retrying}
           onRetryDatabase={onRetryDatabase}
-          onGoToDashboard={() => onNavigate("dashboard")}
-          navigationOpen={navigationOpen}
-          onToggleNavigation={() => setNavigationOpen((open) => !open)}
         />
         <main className="min-h-0 flex-1 overflow-hidden">
           <div className="mx-auto flex h-full w-full max-w-6xl flex-col overflow-auto p-4 md:p-5">

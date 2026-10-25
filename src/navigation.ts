@@ -41,6 +41,14 @@ export const USER_NAV: Array<{
   },
 ];
 
+export function pageTitle(route: AppRoute): string {
+  return (
+    USER_NAV.find((item) => item.id === route)?.label ??
+    NAV_ITEMS.find((item) => item.id === route)?.label ??
+    "Vsmart Sync"
+  );
+}
+
 export const NAV_ITEMS: Array<{
   id: AppRoute;
   label: string;

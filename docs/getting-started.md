@@ -38,7 +38,7 @@ After a successful start you should see the foundation screen calling Rust `get_
 
 - **macOS:** `xcode-select --install`; `brew install postgresql@16` and `brew services start postgresql@16`
 - **Windows:** MSVC Build Tools, [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/), [PostgreSQL](https://www.postgresql.org/download/windows/)
-- **Linux (Debian/Ubuntu):** WebKitGTK 4.1 packages from the Tauri page, plus `postgresql`
+- **Linux (Debian/Ubuntu):** WebKitGTK 4.1 packages from the Tauri page, plus `postgresql`. Run `npm start` in a terminal. Peer authentication only lets the `postgres` system account create the role, so the script may ask for your password once.
 
 `.env` uses `postgres://<username>:<password>@127.0.0.1:5432/<database>`. Defaults in `.env.example` are user/database `vsmart_sync` on port **5432**.
 
